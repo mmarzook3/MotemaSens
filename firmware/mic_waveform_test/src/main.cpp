@@ -1,7 +1,32 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <HTTPClient.h>
+#include <Preferences.h>
+#include <Update.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <driver/i2s.h>
 #include <math.h>
+
+#if __has_include("local_secrets.h")
+#include "local_secrets.h"
+#endif
+
+#ifndef LOCAL_WIFI_SSID
+#define LOCAL_WIFI_SSID ""
+#endif
+
+#ifndef LOCAL_WIFI_PASSWORD
+#define LOCAL_WIFI_PASSWORD ""
+#endif
+
+#ifndef DEVICE_VERSION
+#define DEVICE_VERSION "local-dev"
+#endif
+
+#ifndef OTA_MANIFEST_URL
+#define OTA_MANIFEST_URL ""
+#endif
 
 // Waveshare ESP32-S3-LCD-1.28 display pins.
 static constexpr int LCD_DC = 8;
@@ -42,6 +67,9 @@ static float dc = 0.0f;
 static float smoothedLevel = 0.0f;
 static float autoGain = 12.0f;
 static uint32_t lastDrawMs = 0;
+static uint32_t lastOtaCheckMs = 0;
+static bool otaCheckedOnce = false;
+static Preferences preferences;
 
 static int16_t clampInt16(float value, int16_t minValue, int16_t maxValue)
 {
@@ -67,6 +95,175 @@ static void drawBackground()
   gfx->setTextSize(2);
   gfx->setCursor(46, 8);
   gfx->print("MIC TEST");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    gfx->setTextSize(1);
+    gfx->setCursor(72, 26);
+    gfx->print(WiFi.localIP().toString());
+  }
+}
+
+static String jsonValue(const String &json, const String &key)
+{
+  const String pattern = "\"" + key + "\"";
+  int keyPos = json.indexOf(pattern);
+  if (keyPos < 0) return "";
+
+  int colonPos = json.indexOf(':', keyPos + pattern.length());
+  if (colonPos < 0) return "";
+
+  int firstQuote = json.indexOf('"', colonPos + 1);
+  if (firstQuote < 0) return "";
+
+  int secondQuote = json.indexOf('"', firstQuote + 1);
+  if (secondQuote < 0) return "";
+
+  return json.substring(firstQuote + 1, secondQuote);
+}
+
+static void saveLocalWifiCredentials()
+{
+  if (strlen(LOCAL_WIFI_SSID) == 0) {
+    return;
+  }
+
+  preferences.begin("wifi", false);
+  preferences.putString("ssid", LOCAL_WIFI_SSID);
+  preferences.putString("password", LOCAL_WIFI_PASSWORD);
+  preferences.end();
+}
+
+static bool loadWifiCredentials(String &ssid, String &password)
+{
+  preferences.begin("wifi", true);
+  ssid = preferences.getString("ssid", "");
+  password = preferences.getString("password", "");
+  preferences.end();
+  return ssid.length() > 0;
+}
+
+static void connectWifi()
+{
+  saveLocalWifiCredentials();
+
+  String ssid;
+  String password;
+  if (!loadWifiCredentials(ssid, password)) {
+    Serial.println("wifi not configured");
+    return;
+  }
+
+  Serial.printf("connecting wifi: %s\n", ssid.c_str());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), password.c_str());
+
+  const uint32_t startMs = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startMs < 15000) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("wifi connected, ip=");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("wifi connect failed");
+  }
+}
+
+static bool downloadAndApplyFirmware(const String &firmwareUrl)
+{
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  if (!http.begin(client, firmwareUrl)) {
+    Serial.println("ota firmware begin failed");
+    return false;
+  }
+
+  const int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("ota firmware http code=%d\n", code);
+    http.end();
+    return false;
+  }
+
+  const int contentLength = http.getSize();
+  if (contentLength <= 0) {
+    Serial.println("ota firmware size invalid");
+    http.end();
+    return false;
+  }
+
+  if (!Update.begin(contentLength)) {
+    Serial.println("ota update begin failed");
+    http.end();
+    return false;
+  }
+
+  WiFiClient *stream = http.getStreamPtr();
+  const size_t written = Update.writeStream(*stream);
+  const bool ok = (written == (size_t)contentLength) && Update.end(true);
+  http.end();
+
+  if (!ok) {
+    Serial.printf("ota failed, written=%u expected=%d error=%d\n", (unsigned)written, contentLength, Update.getError());
+    return false;
+  }
+
+  Serial.println("ota done, rebooting");
+  delay(500);
+  ESP.restart();
+  return true;
+}
+
+static void checkForOtaUpdate()
+{
+  if (strlen(OTA_MANIFEST_URL) == 0 || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  Serial.println("checking ota manifest");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  if (!http.begin(client, OTA_MANIFEST_URL)) {
+    Serial.println("ota manifest begin failed");
+    return;
+  }
+
+  const int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("ota manifest http code=%d\n", code);
+    http.end();
+    return;
+  }
+
+  const String manifest = http.getString();
+  http.end();
+
+  const String version = jsonValue(manifest, "version");
+  const String firmwareUrl = jsonValue(manifest, "firmware_url");
+
+  if (version.length() == 0 || firmwareUrl.length() == 0) {
+    Serial.println("ota manifest invalid");
+    return;
+  }
+
+  Serial.printf("device=%s latest=%s\n", DEVICE_VERSION, version.c_str());
+  if (version == DEVICE_VERSION) {
+    return;
+  }
+
+  downloadAndApplyFirmware(firmwareUrl);
 }
 
 static void drawWaveform()
@@ -173,6 +370,7 @@ void setup()
 {
   Serial.begin(115200);
   delay(200);
+  Serial.printf("device version: %s\n", DEVICE_VERSION);
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
@@ -181,6 +379,8 @@ void setup()
     Serial.println("LCD begin failed");
   }
 
+  drawBackground();
+  connectWifi();
   drawBackground();
   setupI2S();
 
@@ -193,13 +393,18 @@ void setup()
 
 void loop()
 {
+  const uint32_t now = millis();
+  if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
+    otaCheckedOnce = true;
+    lastOtaCheckMs = now;
+    checkForOtaUpdate();
+  }
+
   const float level = readMicLevel();
   pushWavePoint(level * 0.95f);
 
-  const uint32_t now = millis();
   if (now - lastDrawMs >= 24) {
     lastDrawMs = now;
     drawWaveform();
   }
 }
-

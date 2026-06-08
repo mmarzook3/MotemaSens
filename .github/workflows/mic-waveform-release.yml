@@ -1,0 +1,63 @@
+name: mic waveform firmware release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "firmware/mic_waveform_test/**"
+      - ".github/workflows/mic-waveform-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install platformio
+        run: pip install platformio
+
+      - name: set firmware version
+        working-directory: firmware/mic_waveform_test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("platformio.ini")
+          text = path.read_text()
+          text = text.replace('-DDEVICE_VERSION=\\"local-dev\\"', f'-DDEVICE_VERSION=\\"{__import__("os").environ["GITHUB_SHA"]}\\"')
+          path.write_text(text)
+          PY
+
+      - name: build firmware
+        working-directory: firmware/mic_waveform_test
+        run: pio run
+
+      - name: prepare release files
+        run: |
+          mkdir -p /tmp/device-release/mic_waveform_test
+          cp firmware/mic_waveform_test/.pio/build/waveshare_esp32_s3_lcd_128/firmware.bin /tmp/device-release/mic_waveform_test/firmware.bin
+          cat > /tmp/device-release/mic_waveform_test/manifest.json <<EOF
+          {
+            "version": "${GITHUB_SHA}",
+            "firmware_url": "https://raw.githubusercontent.com/mmarzook3/MotemaSens/device-release/mic_waveform_test/firmware.bin"
+          }
+          EOF
+
+      - name: publish device release branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: device-release
+          publish_dir: /tmp/device-release
+          force_orphan: true
+          commit_message: update mic waveform firmware for device
