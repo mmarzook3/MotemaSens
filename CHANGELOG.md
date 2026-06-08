@@ -15,3 +15,4 @@
 - Shows a smooth live waveform with DC removal, smoothing and auto gain.
 - Added WiFi connection and GitHub auto-update support for the mic test firmware.
 - Changed the waveform view to use the round LCD safe area and real signed audio samples.
+- Cleaned up the mic waveform screen so the trace stays inside the round display and looks smoother.

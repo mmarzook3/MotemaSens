@@ -45,15 +45,15 @@ static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
-static constexpr size_t WAVE_POINTS_PER_BLOCK = 6;
+static constexpr size_t WAVE_POINTS_PER_BLOCK = 4;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
 static constexpr int CENTER_X = SCREEN_W / 2;
 static constexpr int CENTER_Y = SCREEN_H / 2;
-static constexpr int SAFE_RADIUS = 106;
-static constexpr int HEADER_BOTTOM = 34;
-static constexpr int WAVE_MARGIN = 8;
+static constexpr int SAFE_RADIUS = 102;
+static constexpr int HEADER_BOTTOM = 42;
+static constexpr int WAVE_MARGIN = 12;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -67,7 +67,7 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0, true);
 static float wave[SCREEN_W];
 static float dc = 0.0f;
 static float smoothedLevel = 0.0f;
-static float autoGain = 12.0f;
+static float autoGain = 7.0f;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
@@ -129,13 +129,13 @@ static void drawBackground()
 
   gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->setTextSize(2);
-  gfx->setCursor(46, 8);
+  gfx->setTextSize(1);
+  gfx->setCursor(80, 13);
   gfx->print("MIC TEST");
 
   if (WiFi.status() == WL_CONNECTED) {
     gfx->setTextSize(1);
-    gfx->setCursor(72, 26);
+    gfx->setCursor(82, 24);
     gfx->print(WiFi.localIP().toString());
   }
 }
@@ -316,17 +316,10 @@ static void drawWaveform()
       continue;
     }
 
-    const int y = clampInt16(CENTER_Y - value * halfHeight, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
+    const int y = clampInt16(CENTER_Y - value * halfHeight * 0.82f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
 
     if (x > 0) {
       gfx->drawLine(x - 1, previousY, x, y, COLOR_WAVE);
-    }
-
-    const int bar = abs(y - CENTER_Y);
-    if (bar > 3) {
-      const int barTop = min(y, CENTER_Y);
-      const int barHeight = min(bar, halfHeight);
-      gfx->drawFastVLine(x, barTop, barHeight, COLOR_WAVE);
     }
 
     previousY = y;
@@ -336,7 +329,7 @@ static void drawWaveform()
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  const float softened = (wave[SCREEN_W - 2] * 0.40f) + (sample * 0.60f);
+  const float softened = (wave[SCREEN_W - 2] * 0.72f) + (sample * 0.28f);
   wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
 }
 
@@ -357,7 +350,7 @@ static void readMicSamples()
 
   for (size_t i = 0; i < count; ++i) {
     // SPH0645 data is 24-bit I2S in a 32-bit slot. Use the upper bits and remove DC slowly.
-    const float sample = (float)(samples[i] >> 13);
+    const float sample = (float)(samples[i] >> 14);
     dc += 0.0012f * (sample - dc);
     const float centered = sample - dc;
     sumSq += centered * centered;
@@ -373,22 +366,22 @@ static void readMicSamples()
   }
 
   const float rms = sqrtf(sumSq / max<size_t>(1, count));
-  float normalized = rms / 16384.0f;
+  float normalized = rms / 12000.0f;
 
   // Slow AGC: speech should fill the display, but silence should stay calm.
   const float target = normalized * autoGain;
-  if (target > 0.72f) {
-    autoGain *= 0.985f;
-  } else if (target < 0.28f) {
-    autoGain *= 1.002f;
+  if (target > 0.55f) {
+    autoGain *= 0.975f;
+  } else if (target < 0.22f) {
+    autoGain *= 1.001f;
   }
-  autoGain = constrain(autoGain, 4.0f, 80.0f);
+  autoGain = constrain(autoGain, 2.5f, 28.0f);
 
   normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
   smoothedLevel = (smoothedLevel * 0.82f) + (normalized * 0.18f);
 
   for (size_t i = 0; i < WAVE_POINTS_PER_BLOCK; ++i) {
-    const float signedPoint = constrain((peaks[i] / 32768.0f) * autoGain, -1.0f, 1.0f);
+    const float signedPoint = constrain((peaks[i] / 18000.0f) * autoGain, -1.0f, 1.0f);
     pushWavePoint(signedPoint);
   }
 }
