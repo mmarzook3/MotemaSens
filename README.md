@@ -9,6 +9,10 @@ This repo is for MotemaSens hardware, firmware and customer shared documents.
 - `docs/hardware/Lobe_ESP32-S3_HSI.md` - hardware/software interface for the custom Lobe ESP32-S3 board.
 - `docs/hardware/reference/` - source schematic and Waveshare reference PDFs used for the HSI.
 
+## Firmware tests
+
+- `firmware/mic_waveform_test/` - reads the I2S mic and shows a smooth live waveform on the round LCD.
+
 ## Current important note
 
 The HSI found one issue that needs fixing before bring-up: `SPI2_MISO` for the microSD is connected to H1 pin 18, but that pin is `VSYS` on the Waveshare board. This needs to be moved to a proper GPIO before powering a populated board.
