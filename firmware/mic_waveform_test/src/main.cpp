@@ -44,14 +44,16 @@ static constexpr int I2S_WS = 5;
 static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
-static constexpr size_t AUDIO_BLOCK_SAMPLES = 160;
+static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
+static constexpr size_t WAVE_POINTS_PER_BLOCK = 6;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
+static constexpr int CENTER_X = SCREEN_W / 2;
 static constexpr int CENTER_Y = SCREEN_H / 2;
-static constexpr int WAVE_TOP = 34;
-static constexpr int WAVE_BOTTOM = 214;
-static constexpr int WAVE_HALF_H = (WAVE_BOTTOM - WAVE_TOP) / 2;
+static constexpr int SAFE_RADIUS = 106;
+static constexpr int HEADER_BOTTOM = 34;
+static constexpr int WAVE_MARGIN = 8;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -78,19 +80,54 @@ static int16_t clampInt16(float value, int16_t minValue, int16_t maxValue)
   return (int16_t)value;
 }
 
+static int safeHalfHeightAtX(int x)
+{
+  const int dx = x - CENTER_X;
+  const int inside = SAFE_RADIUS * SAFE_RADIUS - dx * dx;
+  if (inside <= 0) {
+    return 0;
+  }
+
+  int halfHeight = (int)sqrtf((float)inside) - WAVE_MARGIN;
+  const int headerLimit = CENTER_Y - HEADER_BOTTOM - WAVE_MARGIN;
+  halfHeight = min(halfHeight, headerLimit);
+  return max(0, halfHeight);
+}
+
+static void drawRoundVerticalGrid(int x)
+{
+  const int halfHeight = safeHalfHeightAtX(x);
+  if (halfHeight <= 0) {
+    return;
+  }
+  gfx->drawFastVLine(x, CENTER_Y - halfHeight, halfHeight * 2, COLOR_GRID);
+}
+
+static void drawRoundHorizontalGrid(int y)
+{
+  const int dy = y - CENTER_Y;
+  const int inside = SAFE_RADIUS * SAFE_RADIUS - dy * dy;
+  if (inside <= 0) {
+    return;
+  }
+
+  const int halfWidth = (int)sqrtf((float)inside) - WAVE_MARGIN;
+  gfx->drawFastHLine(CENTER_X - halfWidth, y, halfWidth * 2, COLOR_GRID);
+}
+
 static void drawBackground()
 {
   gfx->fillScreen(COLOR_BG);
 
-  for (int x = 0; x < SCREEN_W; x += 24) {
-    gfx->drawFastVLine(x, WAVE_TOP, WAVE_BOTTOM - WAVE_TOP, COLOR_GRID);
+  for (int x = 24; x < SCREEN_W; x += 24) {
+    drawRoundVerticalGrid(x);
   }
 
-  for (int y = WAVE_TOP; y <= WAVE_BOTTOM; y += 30) {
-    gfx->drawFastHLine(0, y, SCREEN_W, COLOR_GRID);
+  for (int y = CENTER_Y - 72; y <= CENTER_Y + 72; y += 24) {
+    drawRoundHorizontalGrid(y);
   }
 
-  gfx->drawFastHLine(0, CENTER_Y, SCREEN_W, COLOR_DIM);
+  gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
   gfx->setTextSize(2);
   gfx->setCursor(46, 8);
@@ -273,49 +310,66 @@ static void drawWaveform()
   int previousY = CENTER_Y;
   for (int x = 0; x < SCREEN_W; ++x) {
     const float value = wave[x];
-    const int y = clampInt16(CENTER_Y - value * WAVE_HALF_H, WAVE_TOP, WAVE_BOTTOM);
+    const int halfHeight = safeHalfHeightAtX(x);
+    if (halfHeight <= 0) {
+      previousY = CENTER_Y;
+      continue;
+    }
+
+    const int y = clampInt16(CENTER_Y - value * halfHeight, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
 
     if (x > 0) {
       gfx->drawLine(x - 1, previousY, x, y, COLOR_WAVE);
     }
 
     const int bar = abs(y - CENTER_Y);
-    if (bar > 2) {
-      gfx->drawFastVLine(x, min(y, CENTER_Y), bar, COLOR_WAVE);
+    if (bar > 3) {
+      const int barTop = min(y, CENTER_Y);
+      const int barHeight = min(bar, halfHeight);
+      gfx->drawFastVLine(x, barTop, barHeight, COLOR_WAVE);
     }
 
     previousY = y;
   }
-
-  const int meterWidth = clampInt16(smoothedLevel * 120.0f, 0, 120);
-  gfx->fillRect(60, 224, 120, 5, 0x1A2A);
-  gfx->fillRect(60, 224, meterWidth, 5, COLOR_WAVE);
 }
 
-static void pushWavePoint(float level)
+static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  wave[SCREEN_W - 1] = level;
+  const float softened = (wave[SCREEN_W - 2] * 0.40f) + (sample * 0.60f);
+  wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
 }
 
-static float readMicLevel()
+static void readMicSamples()
 {
   int32_t samples[AUDIO_BLOCK_SAMPLES];
   size_t bytesRead = 0;
-  const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(40));
+  const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(24));
   if (result != ESP_OK || bytesRead == 0) {
-    return 0.0f;
+    pushWavePoint(0.0f);
+    return;
   }
 
   const size_t count = bytesRead / sizeof(samples[0]);
+  const size_t chunkSize = max<size_t>(1, count / WAVE_POINTS_PER_BLOCK);
   float sumSq = 0.0f;
+  float peaks[WAVE_POINTS_PER_BLOCK] = {};
 
   for (size_t i = 0; i < count; ++i) {
     // SPH0645 data is 24-bit I2S in a 32-bit slot. Use the upper bits and remove DC slowly.
-    const float sample = (float)(samples[i] >> 14);
-    dc += 0.0015f * (sample - dc);
+    const float sample = (float)(samples[i] >> 13);
+    dc += 0.0012f * (sample - dc);
     const float centered = sample - dc;
     sumSq += centered * centered;
+
+    size_t chunk = i / chunkSize;
+    if (chunk >= WAVE_POINTS_PER_BLOCK) {
+      chunk = WAVE_POINTS_PER_BLOCK - 1;
+    }
+
+    if (fabsf(centered) > fabsf(peaks[chunk])) {
+      peaks[chunk] = centered;
+    }
   }
 
   const float rms = sqrtf(sumSq / max<size_t>(1, count));
@@ -332,7 +386,11 @@ static float readMicLevel()
 
   normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
   smoothedLevel = (smoothedLevel * 0.82f) + (normalized * 0.18f);
-  return smoothedLevel;
+
+  for (size_t i = 0; i < WAVE_POINTS_PER_BLOCK; ++i) {
+    const float signedPoint = constrain((peaks[i] / 32768.0f) * autoGain, -1.0f, 1.0f);
+    pushWavePoint(signedPoint);
+  }
 }
 
 static void setupI2S()
@@ -400,8 +458,7 @@ void loop()
     checkForOtaUpdate();
   }
 
-  const float level = readMicLevel();
-  pushWavePoint(level * 0.95f);
+  readMicSamples();
 
   if (now - lastDrawMs >= 24) {
     lastDrawMs = now;

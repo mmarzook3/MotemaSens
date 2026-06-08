@@ -14,3 +14,4 @@
 - Reads the SPH0645 I2S mic from GPIO3/GPIO4/GPIO5.
 - Shows a smooth live waveform with DC removal, smoothing and auto gain.
 - Added WiFi connection and GitHub auto-update support for the mic test firmware.
+- Changed the waveform view to use the round LCD safe area and real signed audio samples.
