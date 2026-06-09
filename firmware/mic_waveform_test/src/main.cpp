@@ -62,7 +62,8 @@ static constexpr uint16_t COLOR_TEXT = 0xFFFF;
 static constexpr uint16_t COLOR_DIM = 0x9D76;
 
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, GFX_NOT_DEFINED, SPI2_HOST);
-Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0, true);
+Arduino_GFX *display = new Arduino_GC9A01(bus, LCD_RST, 0, true);
+Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, SCREEN_H, display);
 
 static float wave[SCREEN_W];
 static float dc = 0.0f;
@@ -344,6 +345,8 @@ static void drawWaveform()
 
     previousY = y;
   }
+
+  gfx->flush();
 }
 
 static void pushWavePoint(float sample)
@@ -489,8 +492,10 @@ void setup()
   }
 
   drawBackground();
+  gfx->flush();
   connectWifi();
   drawBackground();
+  gfx->flush();
   setupI2S();
 
   for (float &point : wave) {
