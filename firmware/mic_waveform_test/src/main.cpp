@@ -239,7 +239,6 @@ static bool downloadAndApplyFirmware(const String &firmwareUrl)
     return false;
   }
   http.addHeader("User-Agent", "MotemaSens-ESP32S3");
-  http.addHeader("Accept", "application/vnd.github.raw");
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
@@ -291,12 +290,15 @@ static void checkForOtaUpdate()
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
-  if (!http.begin(client, OTA_MANIFEST_URL)) {
+  String manifestUrl = OTA_MANIFEST_URL;
+  manifestUrl += (manifestUrl.indexOf('?') >= 0) ? "&t=" : "?t=";
+  manifestUrl += String(millis());
+
+  if (!http.begin(client, manifestUrl)) {
     Serial.println("ota manifest begin failed");
     return;
   }
   http.addHeader("User-Agent", "MotemaSens-ESP32S3");
-  http.addHeader("Accept", "application/vnd.github.raw");
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {

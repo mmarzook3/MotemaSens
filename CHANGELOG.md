@@ -21,3 +21,4 @@
 - Changed OTA to use GitHub raw API download so the board does not get stuck on cached firmware manifests.
 - Tightened heartbeat detection so it counts rising beats instead of repeating while the signal is still high.
 - Changed the LCD drawing to use an off-screen canvas so the waveform screen does not flicker.
+- Moved OTA back to raw firmware files with cache-busting so the device avoids GitHub API 403 errors.
