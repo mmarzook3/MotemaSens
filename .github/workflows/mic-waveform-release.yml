@@ -49,7 +49,7 @@ jobs:
           cat > /tmp/device-release/mic_waveform_test/manifest.json <<EOF
           {
             "version": "${GITHUB_SHA}",
-            "firmware_url": "https://raw.githubusercontent.com/mmarzook3/MotemaSens/device-release/mic_waveform_test/firmware.bin"
+            "firmware_url": "https://api.github.com/repos/mmarzook3/MotemaSens/contents/mic_waveform_test/firmware.bin?ref=device-release"
           }
           EOF
 

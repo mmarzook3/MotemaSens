@@ -18,3 +18,4 @@
 - Cleaned up the mic waveform screen so the trace stays inside the round display and looks smoother.
 - Tagged the first properly working mic firmware and added the flashable bin file.
 - Added the first heartbeat capture tuning with slower display, low-frequency filtering and BPM estimate.
+- Changed OTA to use GitHub raw API download so the board does not get stuck on cached firmware manifests.
