@@ -45,6 +45,7 @@ static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
+static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 3;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
@@ -73,7 +74,7 @@ static float displayEnvelope = 0.0f;
 static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
-static float autoGain = 18.0f;
+static float autoGain = 10.0f;
 static float bpm = 0.0f;
 static uint32_t lastBeatMs = 0;
 static bool beatArmed = true;
@@ -353,7 +354,7 @@ static void drawWaveform()
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  const float softened = (wave[SCREEN_W - 2] * 0.55f) + (sample * 0.45f);
+  const float softened = (wave[SCREEN_W - 2] * 0.42f) + (sample * 0.58f);
   wave[SCREEN_W - 1] = constrain(softened, 0.0f, 1.0f);
 }
 
@@ -401,8 +402,10 @@ static void readMicSamples()
   }
 
   const size_t count = bytesRead / sizeof(samples[0]);
+  const size_t chunkSize = max<size_t>(1, count / DISPLAY_POINTS_PER_BLOCK);
   float sumSq = 0.0f;
   float absolutePeak = 0.0f;
+  float chunkPeaks[DISPLAY_POINTS_PER_BLOCK] = {};
 
   for (size_t i = 0; i < count; ++i) {
     // SPH0645 data is 24-bit I2S in a 32-bit slot. Keep the low-frequency body sound band.
@@ -420,28 +423,39 @@ static void readMicSamples()
     if (magnitude > absolutePeak) {
       absolutePeak = magnitude;
     }
+
+    size_t chunk = i / chunkSize;
+    if (chunk >= DISPLAY_POINTS_PER_BLOCK) {
+      chunk = DISPLAY_POINTS_PER_BLOCK - 1;
+    }
+    if (magnitude > chunkPeaks[chunk]) {
+      chunkPeaks[chunk] = magnitude;
+    }
   }
 
   const float rms = sqrtf(sumSq / max<size_t>(1, count));
-  float normalized = max(rms / 2600.0f, absolutePeak / 9000.0f);
+  float normalized = max(rms / 4200.0f, absolutePeak / 16000.0f);
 
   // Heart sounds are much smaller than speech. Keep AGC slow so each beat shape stays natural.
   const float target = normalized * autoGain;
-  if (target > 0.72f) {
-    autoGain *= 0.992f;
-  } else if (target < 0.20f) {
-    autoGain *= 1.004f;
+  if (target > 0.48f) {
+    autoGain *= 0.965f;
+  } else if (target < 0.13f) {
+    autoGain *= 1.0015f;
   }
-  autoGain = constrain(autoGain, 6.0f, 85.0f);
+  autoGain = constrain(autoGain, 3.0f, 36.0f);
 
   normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
-  smoothedLevel = (smoothedLevel * 0.90f) + (normalized * 0.10f);
+  smoothedLevel = (smoothedLevel * 0.88f) + (normalized * 0.12f);
   updateBeatDetector(smoothedLevel);
 
-  const float displayPoint = constrain(normalized * 1.35f, 0.0f, 1.0f);
-  const float smoothing = (displayPoint > displayEnvelope) ? 0.55f : 0.16f;
-  displayEnvelope += smoothing * (displayPoint - displayEnvelope);
-  pushWavePoint(displayEnvelope);
+  for (size_t i = 0; i < DISPLAY_POINTS_PER_BLOCK; ++i) {
+    float displayPoint = constrain((chunkPeaks[i] / 16000.0f) * autoGain, 0.0f, 1.0f);
+    displayPoint = constrain(powf(displayPoint, 0.72f) * 0.78f, 0.0f, 0.92f);
+    const float smoothing = (displayPoint > displayEnvelope) ? 0.72f : 0.28f;
+    displayEnvelope += smoothing * (displayPoint - displayEnvelope);
+    pushWavePoint(displayEnvelope);
+  }
 }
 
 static void setupI2S()

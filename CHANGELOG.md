@@ -23,3 +23,4 @@
 - Changed the LCD drawing to use an off-screen canvas so the waveform screen does not flicker.
 - Moved OTA back to raw firmware files with cache-busting so the device avoids GitHub API 403 errors.
 - Changed the heartbeat graph to scroll faster and show the audio envelope instead of signed peaks.
+- Reduced heartbeat display saturation and made the envelope graph scroll faster again.
