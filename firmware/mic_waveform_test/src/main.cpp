@@ -48,7 +48,8 @@ static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
-static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 3;
+static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 4;
+static constexpr size_t LABEL_HISTORY = 8;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
@@ -73,7 +74,7 @@ static float dc = 0.0f;
 static float lowFast = 0.0f;
 static float lowSlow = 0.0f;
 static float smoothedLevel = 0.0f;
-static float displayEnvelope = 0.0f;
+static float displaySample = 0.0f;
 static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
@@ -87,6 +88,14 @@ static bool ledGreenOn = false;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static Preferences preferences;
+
+struct HeartLabel {
+  int x;
+  char text[3];
+};
+
+static HeartLabel labels[LABEL_HISTORY] = {};
+static bool nextLabelIsS1 = true;
 
 static int16_t clampInt16(float value, int16_t minValue, int16_t maxValue)
 {
@@ -158,6 +167,39 @@ static void drawBackground()
     gfx->setCursor(96, 35);
     gfx->print((int)(bpm + 0.5f));
     gfx->print(" BPM");
+  }
+}
+
+static void addHeartLabel()
+{
+  memmove(&labels[0], &labels[1], sizeof(labels) - sizeof(labels[0]));
+  HeartLabel &label = labels[LABEL_HISTORY - 1];
+  label.x = SCREEN_W - 10;
+  label.text[0] = 'S';
+  label.text[1] = nextLabelIsS1 ? '1' : '2';
+  label.text[2] = '\0';
+  nextLabelIsS1 = !nextLabelIsS1;
+}
+
+static void scrollHeartLabels()
+{
+  for (HeartLabel &label : labels) {
+    if (label.x > 0) {
+      label.x -= DISPLAY_POINTS_PER_BLOCK;
+    }
+  }
+}
+
+static void drawHeartLabels()
+{
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+  gfx->setTextSize(1);
+
+  for (const HeartLabel &label : labels) {
+    if (label.x > 8 && label.x < SCREEN_W - 12 && label.text[0] != '\0') {
+      gfx->setCursor(label.x - 5, HEADER_BOTTOM + 2);
+      gfx->print(label.text);
+    }
   }
 }
 
@@ -333,18 +375,18 @@ static void checkForOtaUpdate()
 static void drawWaveform()
 {
   drawBackground();
+  drawHeartLabels();
 
   int previousY = CENTER_Y;
   for (int x = 0; x < SCREEN_W; ++x) {
-    const float value = constrain(wave[x], 0.0f, 1.0f);
+    const float value = constrain(wave[x], -1.0f, 1.0f);
     const int halfHeight = safeHalfHeightAtX(x);
     if (halfHeight <= 0) {
       previousY = CENTER_Y;
       continue;
     }
 
-    const int baseline = CENTER_Y + (int)(halfHeight * 0.62f);
-    const int y = clampInt16(baseline - value * halfHeight * 1.22f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
+    const int y = clampInt16(CENTER_Y - value * halfHeight * 0.96f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
 
     if (x > 0) {
       gfx->drawLine(x - 1, previousY, x, y, COLOR_WAVE);
@@ -359,8 +401,9 @@ static void drawWaveform()
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  const float softened = (wave[SCREEN_W - 2] * 0.42f) + (sample * 0.58f);
-  wave[SCREEN_W - 1] = constrain(softened, 0.0f, 1.0f);
+  const float softened = (wave[SCREEN_W - 2] * 0.18f) + (sample * 0.82f);
+  wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
+  scrollHeartLabels();
 }
 
 static void updateBeatDetector(float energy)
@@ -382,6 +425,7 @@ static void updateBeatDetector(float energy)
   }
 
   beatArmed = false;
+  addHeartLabel();
 
   if (lastBeatMs > 0) {
     const uint32_t intervalMs = now - lastBeatMs;
@@ -411,6 +455,7 @@ static void readMicSamples()
   float sumSq = 0.0f;
   float absolutePeak = 0.0f;
   float chunkPeaks[DISPLAY_POINTS_PER_BLOCK] = {};
+  float chunkSignedPeaks[DISPLAY_POINTS_PER_BLOCK] = {};
 
   for (size_t i = 0; i < count; ++i) {
     // SPH0645 data is 24-bit I2S in a 32-bit slot. Keep the low-frequency body sound band.
@@ -435,6 +480,7 @@ static void readMicSamples()
     }
     if (magnitude > chunkPeaks[chunk]) {
       chunkPeaks[chunk] = magnitude;
+      chunkSignedPeaks[chunk] = heartBand;
     }
   }
 
@@ -455,11 +501,11 @@ static void readMicSamples()
   updateBeatDetector(smoothedLevel);
 
   for (size_t i = 0; i < DISPLAY_POINTS_PER_BLOCK; ++i) {
-    float displayPoint = constrain((chunkPeaks[i] / 16000.0f) * autoGain, 0.0f, 1.0f);
-    displayPoint = constrain(powf(displayPoint, 0.72f) * 0.78f, 0.0f, 0.92f);
-    const float smoothing = (displayPoint > displayEnvelope) ? 0.72f : 0.28f;
-    displayEnvelope += smoothing * (displayPoint - displayEnvelope);
-    pushWavePoint(displayEnvelope);
+    const float sign = (chunkSignedPeaks[i] >= 0.0f) ? 1.0f : -1.0f;
+    float displayPoint = constrain((chunkPeaks[i] / 12000.0f) * autoGain, 0.0f, 1.0f);
+    displayPoint = constrain(powf(displayPoint, 0.68f) * 0.86f, 0.0f, 0.96f) * sign;
+    displaySample += 0.70f * (displayPoint - displaySample);
+    pushWavePoint(displaySample);
   }
 }
 

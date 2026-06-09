@@ -25,3 +25,4 @@
 - Changed the heartbeat graph to scroll faster and show the audio envelope instead of signed peaks.
 - Reduced heartbeat display saturation and made the envelope graph scroll faster again.
 - Added GPIO14 green LED heartbeat blink every second so the running firmware is easy to confirm.
+- Changed the heartbeat display to a signed phonocardiogram-style trace with S1/S2 labels.
