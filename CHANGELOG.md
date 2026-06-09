@@ -24,3 +24,4 @@
 - Moved OTA back to raw firmware files with cache-busting so the device avoids GitHub API 403 errors.
 - Changed the heartbeat graph to scroll faster and show the audio envelope instead of signed peaks.
 - Reduced heartbeat display saturation and made the envelope graph scroll faster again.
+- Added GPIO14 green LED heartbeat blink every second so the running firmware is easy to confirm.

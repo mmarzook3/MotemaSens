@@ -41,6 +41,9 @@ static constexpr int I2S_DATA = 3;
 static constexpr int I2S_BCLK = 4;
 static constexpr int I2S_WS = 5;
 
+// Custom Lobe PCB status LED.
+static constexpr int LED_GREEN = 14;
+
 static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
@@ -79,6 +82,8 @@ static float bpm = 0.0f;
 static uint32_t lastBeatMs = 0;
 static bool beatArmed = true;
 static uint32_t lastDrawMs = 0;
+static uint32_t lastLedToggleMs = 0;
+static bool ledGreenOn = false;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static Preferences preferences;
@@ -489,6 +494,17 @@ static void setupI2S()
   ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
 }
 
+static void updateDeviceHeartbeatLed(uint32_t now)
+{
+  if (now - lastLedToggleMs < 1000) {
+    return;
+  }
+
+  lastLedToggleMs = now;
+  ledGreenOn = !ledGreenOn;
+  digitalWrite(LED_GREEN, ledGreenOn ? HIGH : LOW);
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -497,6 +513,8 @@ void setup()
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
+  pinMode(LED_GREEN, OUTPUT);
+  digitalWrite(LED_GREEN, LOW);
 
   if (!gfx->begin(80000000)) {
     Serial.println("LCD begin failed");
@@ -519,6 +537,8 @@ void setup()
 void loop()
 {
   const uint32_t now = millis();
+  updateDeviceHeartbeatLed(now);
+
   if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
     otaCheckedOnce = true;
     lastOtaCheckMs = now;
