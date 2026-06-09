@@ -17,3 +17,4 @@
 - Changed the waveform view to use the round LCD safe area and real signed audio samples.
 - Cleaned up the mic waveform screen so the trace stays inside the round display and looks smoother.
 - Tagged the first properly working mic firmware and added the flashable bin file.
+- Added the first heartbeat capture tuning with slower display, low-frequency filtering and BPM estimate.

@@ -45,7 +45,7 @@ static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
-static constexpr size_t WAVE_POINTS_PER_BLOCK = 4;
+static constexpr size_t HEART_BLOCKS_PER_POINT = 2;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
@@ -66,8 +66,17 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0, true);
 
 static float wave[SCREEN_W];
 static float dc = 0.0f;
+static float lowFast = 0.0f;
+static float lowSlow = 0.0f;
+static float heartPointSum = 0.0f;
+static size_t heartPointBlocks = 0;
 static float smoothedLevel = 0.0f;
-static float autoGain = 7.0f;
+static float beatEnvelope = 0.0f;
+static float beatFloor = 0.0f;
+static float beatThreshold = 0.0f;
+static float autoGain = 18.0f;
+static float bpm = 0.0f;
+static uint32_t lastBeatMs = 0;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
@@ -130,13 +139,19 @@ static void drawBackground()
   gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
   gfx->setTextSize(1);
-  gfx->setCursor(80, 13);
-  gfx->print("MIC TEST");
+  gfx->setCursor(76, 13);
+  gfx->print("HEART MIC");
 
   if (WiFi.status() == WL_CONNECTED) {
     gfx->setTextSize(1);
     gfx->setCursor(82, 24);
     gfx->print(WiFi.localIP().toString());
+  }
+
+  if (bpm > 30.0f && bpm < 220.0f) {
+    gfx->setCursor(96, 35);
+    gfx->print((int)(bpm + 0.5f));
+    gfx->print(" BPM");
   }
 }
 
@@ -329,8 +344,33 @@ static void drawWaveform()
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  const float softened = (wave[SCREEN_W - 2] * 0.72f) + (sample * 0.28f);
+  const float softened = (wave[SCREEN_W - 2] * 0.84f) + (sample * 0.16f);
   wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
+}
+
+static void updateBeatDetector(float energy)
+{
+  const uint32_t now = millis();
+  beatEnvelope = (beatEnvelope * 0.90f) + (energy * 0.10f);
+  beatFloor = (beatFloor * 0.996f) + (beatEnvelope * 0.004f);
+  beatThreshold = (beatThreshold * 0.96f) + ((beatFloor + 0.18f) * 0.04f);
+
+  const bool beatCandidate = beatEnvelope > beatThreshold && energy > 0.22f;
+  if (!beatCandidate || now - lastBeatMs < 330) {
+    return;
+  }
+
+  if (lastBeatMs > 0) {
+    const uint32_t intervalMs = now - lastBeatMs;
+    if (intervalMs >= 330 && intervalMs <= 2000) {
+      const float instantBpm = 60000.0f / (float)intervalMs;
+      bpm = (bpm <= 0.0f) ? instantBpm : (bpm * 0.78f) + (instantBpm * 0.22f);
+      Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
+                    (unsigned long)intervalMs, bpm, beatEnvelope, autoGain);
+    }
+  }
+
+  lastBeatMs = now;
 }
 
 static void readMicSamples()
@@ -344,45 +384,50 @@ static void readMicSamples()
   }
 
   const size_t count = bytesRead / sizeof(samples[0]);
-  const size_t chunkSize = max<size_t>(1, count / WAVE_POINTS_PER_BLOCK);
   float sumSq = 0.0f;
-  float peaks[WAVE_POINTS_PER_BLOCK] = {};
+  float signedPeak = 0.0f;
 
   for (size_t i = 0; i < count; ++i) {
-    // SPH0645 data is 24-bit I2S in a 32-bit slot. Use the upper bits and remove DC slowly.
+    // SPH0645 data is 24-bit I2S in a 32-bit slot. Keep the low-frequency body sound band.
     const float sample = (float)(samples[i] >> 14);
-    dc += 0.0012f * (sample - dc);
+    dc += 0.00020f * (sample - dc);
     const float centered = sample - dc;
-    sumSq += centered * centered;
 
-    size_t chunk = i / chunkSize;
-    if (chunk >= WAVE_POINTS_PER_BLOCK) {
-      chunk = WAVE_POINTS_PER_BLOCK - 1;
-    }
+    lowFast += 0.052f * (centered - lowFast);
+    lowSlow += 0.006f * (centered - lowSlow);
+    const float heartBand = lowFast - lowSlow;
 
-    if (fabsf(centered) > fabsf(peaks[chunk])) {
-      peaks[chunk] = centered;
+    sumSq += heartBand * heartBand;
+
+    if (fabsf(heartBand) > fabsf(signedPeak)) {
+      signedPeak = heartBand;
     }
   }
 
   const float rms = sqrtf(sumSq / max<size_t>(1, count));
-  float normalized = rms / 12000.0f;
+  float normalized = rms / 3200.0f;
 
-  // Slow AGC: speech should fill the display, but silence should stay calm.
+  // Heart sounds are much smaller than speech. Keep AGC slow so each beat shape stays natural.
   const float target = normalized * autoGain;
-  if (target > 0.55f) {
-    autoGain *= 0.975f;
-  } else if (target < 0.22f) {
-    autoGain *= 1.001f;
+  if (target > 0.72f) {
+    autoGain *= 0.992f;
+  } else if (target < 0.20f) {
+    autoGain *= 1.004f;
   }
-  autoGain = constrain(autoGain, 2.5f, 28.0f);
+  autoGain = constrain(autoGain, 6.0f, 85.0f);
 
   normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
-  smoothedLevel = (smoothedLevel * 0.82f) + (normalized * 0.18f);
+  smoothedLevel = (smoothedLevel * 0.94f) + (normalized * 0.06f);
+  updateBeatDetector(smoothedLevel);
 
-  for (size_t i = 0; i < WAVE_POINTS_PER_BLOCK; ++i) {
-    const float signedPoint = constrain((peaks[i] / 18000.0f) * autoGain, -1.0f, 1.0f);
-    pushWavePoint(signedPoint);
+  const float signedPoint = constrain((signedPeak / 4200.0f) * autoGain, -1.0f, 1.0f);
+  heartPointSum += signedPoint;
+  heartPointBlocks++;
+
+  if (heartPointBlocks >= HEART_BLOCKS_PER_POINT) {
+    pushWavePoint(heartPointSum / (float)heartPointBlocks);
+    heartPointSum = 0.0f;
+    heartPointBlocks = 0;
   }
 }
 
