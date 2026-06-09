@@ -45,7 +45,6 @@ static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
-static constexpr size_t HEART_BLOCKS_PER_POINT = 2;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
@@ -69,9 +68,8 @@ static float wave[SCREEN_W];
 static float dc = 0.0f;
 static float lowFast = 0.0f;
 static float lowSlow = 0.0f;
-static float heartPointSum = 0.0f;
-static size_t heartPointBlocks = 0;
 static float smoothedLevel = 0.0f;
+static float displayEnvelope = 0.0f;
 static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
@@ -332,14 +330,15 @@ static void drawWaveform()
 
   int previousY = CENTER_Y;
   for (int x = 0; x < SCREEN_W; ++x) {
-    const float value = wave[x];
+    const float value = constrain(wave[x], 0.0f, 1.0f);
     const int halfHeight = safeHalfHeightAtX(x);
     if (halfHeight <= 0) {
       previousY = CENTER_Y;
       continue;
     }
 
-    const int y = clampInt16(CENTER_Y - value * halfHeight * 0.82f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
+    const int baseline = CENTER_Y + (int)(halfHeight * 0.62f);
+    const int y = clampInt16(baseline - value * halfHeight * 1.22f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
 
     if (x > 0) {
       gfx->drawLine(x - 1, previousY, x, y, COLOR_WAVE);
@@ -354,8 +353,8 @@ static void drawWaveform()
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
-  const float softened = (wave[SCREEN_W - 2] * 0.84f) + (sample * 0.16f);
-  wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
+  const float softened = (wave[SCREEN_W - 2] * 0.55f) + (sample * 0.45f);
+  wave[SCREEN_W - 1] = constrain(softened, 0.0f, 1.0f);
 }
 
 static void updateBeatDetector(float energy)
@@ -403,7 +402,7 @@ static void readMicSamples()
 
   const size_t count = bytesRead / sizeof(samples[0]);
   float sumSq = 0.0f;
-  float signedPeak = 0.0f;
+  float absolutePeak = 0.0f;
 
   for (size_t i = 0; i < count; ++i) {
     // SPH0645 data is 24-bit I2S in a 32-bit slot. Keep the low-frequency body sound band.
@@ -417,13 +416,14 @@ static void readMicSamples()
 
     sumSq += heartBand * heartBand;
 
-    if (fabsf(heartBand) > fabsf(signedPeak)) {
-      signedPeak = heartBand;
+    const float magnitude = fabsf(heartBand);
+    if (magnitude > absolutePeak) {
+      absolutePeak = magnitude;
     }
   }
 
   const float rms = sqrtf(sumSq / max<size_t>(1, count));
-  float normalized = rms / 3200.0f;
+  float normalized = max(rms / 2600.0f, absolutePeak / 9000.0f);
 
   // Heart sounds are much smaller than speech. Keep AGC slow so each beat shape stays natural.
   const float target = normalized * autoGain;
@@ -435,18 +435,13 @@ static void readMicSamples()
   autoGain = constrain(autoGain, 6.0f, 85.0f);
 
   normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
-  smoothedLevel = (smoothedLevel * 0.94f) + (normalized * 0.06f);
+  smoothedLevel = (smoothedLevel * 0.90f) + (normalized * 0.10f);
   updateBeatDetector(smoothedLevel);
 
-  const float signedPoint = constrain((signedPeak / 4200.0f) * autoGain, -1.0f, 1.0f);
-  heartPointSum += signedPoint;
-  heartPointBlocks++;
-
-  if (heartPointBlocks >= HEART_BLOCKS_PER_POINT) {
-    pushWavePoint(heartPointSum / (float)heartPointBlocks);
-    heartPointSum = 0.0f;
-    heartPointBlocks = 0;
-  }
+  const float displayPoint = constrain(normalized * 1.35f, 0.0f, 1.0f);
+  const float smoothing = (displayPoint > displayEnvelope) ? 0.55f : 0.16f;
+  displayEnvelope += smoothing * (displayPoint - displayEnvelope);
+  pushWavePoint(displayEnvelope);
 }
 
 static void setupI2S()
