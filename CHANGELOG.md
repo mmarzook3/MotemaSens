@@ -19,3 +19,4 @@
 - Tagged the first properly working mic firmware and added the flashable bin file.
 - Added the first heartbeat capture tuning with slower display, low-frequency filtering and BPM estimate.
 - Changed OTA to use GitHub raw API download so the board does not get stuck on cached firmware manifests.
+- Tightened heartbeat detection so it counts rising beats instead of repeating while the signal is still high.

@@ -77,6 +77,7 @@ static float beatThreshold = 0.0f;
 static float autoGain = 18.0f;
 static float bpm = 0.0f;
 static uint32_t lastBeatMs = 0;
+static bool beatArmed = true;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
@@ -356,17 +357,25 @@ static void updateBeatDetector(float energy)
 {
   const uint32_t now = millis();
   beatEnvelope = (beatEnvelope * 0.90f) + (energy * 0.10f);
-  beatFloor = (beatFloor * 0.996f) + (beatEnvelope * 0.004f);
-  beatThreshold = (beatThreshold * 0.96f) + ((beatFloor + 0.18f) * 0.04f);
+  beatFloor = (beatFloor * 0.998f) + (beatEnvelope * 0.002f);
+  const float targetThreshold = max(0.30f, beatFloor + 0.20f);
+  beatThreshold = (beatThreshold * 0.94f) + (targetThreshold * 0.06f);
 
-  const bool beatCandidate = beatEnvelope > beatThreshold && energy > 0.22f;
-  if (!beatCandidate || now - lastBeatMs < 330) {
+  const float resetLevel = max(0.18f, beatThreshold * 0.72f);
+  if (beatEnvelope < resetLevel) {
+    beatArmed = true;
+  }
+
+  const bool beatCandidate = beatArmed && beatEnvelope > beatThreshold && energy > beatThreshold;
+  if (!beatCandidate || now - lastBeatMs < 480) {
     return;
   }
 
+  beatArmed = false;
+
   if (lastBeatMs > 0) {
     const uint32_t intervalMs = now - lastBeatMs;
-    if (intervalMs >= 330 && intervalMs <= 2000) {
+    if (intervalMs >= 480 && intervalMs <= 2000) {
       const float instantBpm = 60000.0f / (float)intervalMs;
       bpm = (bpm <= 0.0f) ? instantBpm : (bpm * 0.78f) + (instantBpm * 0.22f);
       Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
