@@ -29,3 +29,4 @@
 - Split the firmware into acquisition and output tasks pinned to separate ESP32-S3 cores, with queues between them.
 - Added firmware architecture documentation so the acquisition/output split stays clear during development.
 - Added QMI8658 accelerometer X/Y/Z acquisition on Core 0 and a Core 1 LCD graph.
+- Changed dev build workflow so only major releases use OTA, dev firmware is flashed directly and the LCD shows mic plus accelerometer together.

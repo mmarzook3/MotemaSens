@@ -3,16 +3,17 @@
 This is a quick test software for the custom Lobe ESP32-S3 board.
 
 It reads the SPH0645LM4H-B I2S mic and the Waveshare onboard QMI8658 accelerometer.
-The round LCD currently shows a smooth live X/Y/Z accelerometer graph.
+The round LCD currently shows both live sensors: QMI8658 X/Y/Z accelerometer on the upper graph and the mic waveform on the lower graph.
 
-It also connects to WiFi and checks GitHub for a newer firmware build. When a new firmware build is published by the GitHub Action, the board downloads it, flashes it and reboots.
+It also connects to WiFi. Dev builds are flashed directly over USB and do not run OTA while `DEVICE_VERSION` is `local-dev`.
+OTA is only for major tagged releases or manually triggered release builds.
 
 ## Architecture
 
 This test firmware follows the main firmware architecture in `../../docs/firmware/README.md`.
 
 - `acquisitionTask` is pinned to Core 0. It reads/processes the mic and accelerometer and sends queue events.
-- `outputTask` is pinned to Core 1. It owns the LCD accelerometer graph, WiFi OTA and GPIO14 green heartbeat LED.
+- `outputTask` is pinned to Core 1. It owns the combined LCD mic/accelerometer graph, WiFi OTA for release builds and GPIO14 green heartbeat LED.
 - Acquisition never waits for LCD, WiFi, OTA or future SD/USB/BLE output.
 
 ## Hardware pins
@@ -62,14 +63,25 @@ pio device monitor
 
 If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.cpp` from `I2S_CHANNEL_FMT_ONLY_LEFT` to `I2S_CHANNEL_FMT_ONLY_RIGHT`.
 
-## Auto update
+## Development and release build rule
 
-Every push that changes this firmware runs `.github/workflows/mic-waveform-release.yml`.
+Every dev change must be committed and pushed with a clear message, even when it is flashed directly over USB.
+Docs must be updated in the same change when behavior, architecture, pins, build flow or release flow changes.
 
-That workflow builds the firmware and publishes:
+Dev builds:
+
+- Build from `main`.
+- Flash directly with PlatformIO over USB.
+- Keep `DEVICE_VERSION` as `local-dev`.
+- Do not run OTA from the device.
+
+Major releases:
+
+- Use a major release tag matching `v*.*.0-*`, or run `.github/workflows/mic-waveform-release.yml` manually.
+- The workflow builds the firmware and publishes:
 
 - `device-release` branch
 - `mic_waveform_test/firmware.bin`
 - `mic_waveform_test/manifest.json`
 
-The board checks that manifest on boot and about once every minute after that.
+Release firmware checks that manifest on boot and about once every minute after that.

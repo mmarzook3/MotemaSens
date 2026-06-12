@@ -36,7 +36,7 @@ The current `firmware/mic_waveform_test` firmware implements the pattern with tw
 | Task | Core | Priority | Current purpose |
 | --- | --- | --- | --- |
 | `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
-| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws LCD accelerometer graph, handles WiFi OTA, blinks GPIO14 green LED, drains acquisition queues |
+| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD mic/accelerometer graph, handles WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
 
 The current queues are:
 
@@ -130,6 +130,16 @@ If ECG and SD use the same SPI bus in a future board revision, protect bus acces
 
 GPIO14 / `LED_GREEN` is the device heartbeat LED. It toggles every second from the output task so there is always a quick visual sign that firmware is running.
 
+## Build tracking rule
+
+All firmware changes must be committed and pushed, including dev builds flashed directly over USB.
+
+- Use clear commit messages written in the project style.
+- Update docs when behavior, architecture, pins, build flow or release flow changes.
+- Do not publish OTA firmware for normal dev changes.
+- Publish OTA only for major release tags matching `v*.*.0-*`, or from a manual release workflow run.
+- `local-dev` firmware must not auto-update itself from OTA.
+
 ## Development checklist
 
 Before adding new firmware features, check:
@@ -141,3 +151,4 @@ Before adding new firmware features, check:
 - How will overflow be detected and reported?
 - Does this touch a shared bus?
 - Is the behavior documented here?
+- Was the change committed and pushed?
