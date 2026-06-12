@@ -150,6 +150,7 @@ All firmware changes must be committed and pushed, including dev builds flashed 
 
 - Use clear commit messages written in the project style.
 - Update docs when behavior, architecture, pins, build flow or release flow changes.
+- Keep debug evidence in git: serial CSV files, camera/display pictures, calibration summaries, plots, test plans and test-result notes should go into dated folders under `test_logs/` or `docs/firmware/`.
 - Do not publish OTA firmware for normal dev changes.
 - Publish OTA only for major release tags matching `v*.*.0-*`, or from a manual release workflow run.
 - `local-dev` firmware must not auto-update itself from OTA.

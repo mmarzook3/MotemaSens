@@ -1,0 +1,3 @@
+test,frequency_hz,file,rows,rate_hz,beats,rejected,final_bpm,mic_trace_sd,mic_level_mean,mic_level_max,mic_level_saturation_pct,envelope_mean,envelope_max,threshold_mean,motion_max,interval_mean_ms,interval_min_ms,interval_max_ms,end
+ambient,0,ambient_100hz_60s.csv,999,100.03006915906585,0,0,0.0,0.11027581632250802,0.20465105105105105,0.3259,0.0,0.2046994994994995,0.3105,0.264988988988989,0.0062,,,,"LIVE_TEST_END,reason=stopped,elapsed_ms=9999,samples=999,beats=0,rejected=0,bpm=0.0"
+tone_120hz,120,tone_120hz_100hz_60s.csv,999,100.03006915906585,0,0,0.0,0.1055932181703893,0.24052302302302303,0.3272,0.0,0.23985395395395395,0.3133,0.29049309309309307,0.0068,,,,"LIVE_TEST_END,reason=stopped,elapsed_ms=9999,samples=999,beats=0,rejected=0,bpm=0.0"
