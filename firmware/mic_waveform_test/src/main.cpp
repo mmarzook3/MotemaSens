@@ -82,6 +82,7 @@ static constexpr uint16_t COLOR_DIM = 0x9D76;
 static constexpr uint16_t COLOR_X = 0xF986;
 static constexpr uint16_t COLOR_Y = 0x87F0;
 static constexpr uint16_t COLOR_Z = 0x7DFF;
+static constexpr uint16_t COLOR_WIFI = 0x07E0;
 
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, GFX_NOT_DEFINED, SPI2_HOST);
 Arduino_GFX *display = new Arduino_GC9A01(bus, LCD_RST, 0, true);
@@ -184,6 +185,21 @@ static void drawRoundHorizontalGrid(int y)
   gfx->drawFastHLine(CENTER_X - halfWidth, y, halfWidth * 2, COLOR_GRID);
 }
 
+static int centeredTextX(const String &text, int textSize)
+{
+  const int charWidth = 6 * textSize;
+  return CENTER_X - (text.length() * charWidth) / 2;
+}
+
+static String shortDeviceVersion()
+{
+  String version = DEVICE_VERSION;
+  if (version.length() > 7 && version != "local-dev") {
+    version = version.substring(0, 7);
+  }
+  return version;
+}
+
 static void drawBackground()
 {
   gfx->fillScreen(COLOR_BG);
@@ -199,14 +215,17 @@ static void drawBackground()
   gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
   gfx->setTextSize(1);
-  gfx->setCursor(88, 13);
-  gfx->print("ACC XYZ");
+  const String versionText = "SW " + shortDeviceVersion();
+  const int versionX = centeredTextX(versionText, 1);
+  gfx->setCursor(versionX, 10);
+  gfx->print(versionText);
 
   if (WiFi.status() == WL_CONNECTED) {
-    gfx->setTextSize(1);
-    gfx->setCursor(82, 24);
-    gfx->print(WiFi.localIP().toString());
+    gfx->fillCircle(versionX + (versionText.length() * 6) + 8, 13, 2, COLOR_WIFI);
   }
+
+  gfx->setCursor(99, 23);
+  gfx->print("ACC XYZ");
 
   gfx->setCursor(58, 35);
   gfx->setTextColor(COLOR_X, COLOR_BG);
