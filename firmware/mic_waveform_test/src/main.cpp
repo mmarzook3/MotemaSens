@@ -55,9 +55,11 @@ static constexpr int IMU_SCL = 7;
 static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
-static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
-static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 4;
+static constexpr size_t AUDIO_BLOCK_SAMPLES = 64;
+static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 2;
 static constexpr size_t LABEL_HISTORY = 8;
+static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
+static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -114,6 +116,13 @@ static bool ledGreenOn = false;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static uint32_t lastAccelReadMs = 0;
+static uint32_t lastAccelDebugMs = 0;
+static uint32_t accelSamplesSinceDebug = 0;
+static uint32_t accelReadFailuresSinceDebug = 0;
+static uint8_t accelRegisterDumpsLeft = 6;
+static int16_t latestAccelRawX = 0;
+static int16_t latestAccelRawY = 0;
+static int16_t latestAccelRawZ = 0;
 static bool imuReady = false;
 static uint8_t imuAddress = 0x6A;
 static Preferences preferences;
@@ -675,13 +684,19 @@ static bool setupQmi8658()
     return false;
   }
 
-  // CTRL1 enables auto-increment; CTRL2 sets accel to +/-8g at 125 Hz; CTRL7 enables accel only.
+  qmiWriteRegister(0x02, 0x80);
+  delay(50);
+
+  // Follow the common QMI8658 driver sequence:
+  // CTRL1 auto-increment, CTRL2 accel +/-8g at 1000 Hz, CTRL3 gyro 512 dps at 1000 Hz.
+  // Gyro is enabled too because this keeps the standard 12-byte sensor data path active.
   const bool ok = qmiWriteRegister(0x02, 0x60) &&
                   qmiWriteRegister(0x08, 0x00) &&
-                  qmiWriteRegister(0x03, 0x26) &&
-                  qmiWriteRegister(0x08, 0x01);
+                  qmiWriteRegister(0x03, 0x23) &&
+                  qmiWriteRegister(0x04, 0x43) &&
+                  qmiWriteRegister(0x08, 0x03);
   if (ok) {
-    Serial.printf("QMI8658 ready at 0x%02X\n", imuAddress);
+    Serial.printf("QMI8658 ready at 0x%02X, accel +/-8g 1000Hz\n", imuAddress);
   } else {
     Serial.println("QMI8658 init failed");
   }
@@ -690,6 +705,11 @@ static bool setupQmi8658()
 
 static bool readQmi8658Accel(float &x, float &y, float &z)
 {
+  uint8_t status = 0;
+  if (!qmiReadRegister(0x2E, &status, 1) || (status & 0x01) == 0) {
+    return false;
+  }
+
   uint8_t buffer[6] = {};
   if (!qmiReadRegister(0x35, buffer, sizeof(buffer))) {
     return false;
@@ -698,6 +718,10 @@ static bool readQmi8658Accel(float &x, float &y, float &z)
   const int16_t rawX = qmiInt16(buffer[0], buffer[1]);
   const int16_t rawY = qmiInt16(buffer[2], buffer[3]);
   const int16_t rawZ = qmiInt16(buffer[4], buffer[5]);
+
+  latestAccelRawX = rawX;
+  latestAccelRawY = rawY;
+  latestAccelRawZ = rawZ;
 
   // +/-8g full scale uses 4096 LSB/g.
   x = (float)rawX / 4096.0f;
@@ -713,21 +737,52 @@ static void readAccelSample()
   }
 
   const uint32_t now = millis();
-  if (now - lastAccelReadMs < 40) {
+  if (now - lastAccelReadMs < ACCEL_SAMPLE_PERIOD_MS) {
     return;
   }
   lastAccelReadMs = now;
 
   AccelSample sample = {};
   sample.valid = readQmi8658Accel(sample.x, sample.y, sample.z);
-  sendAccelSample(sample);
+  if (sample.valid) {
+    ++accelSamplesSinceDebug;
+    sendAccelSample(sample);
+  } else {
+    ++accelReadFailuresSinceDebug;
+  }
+
+  if (now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
+    const float magnitude = sqrtf((sample.x * sample.x) + (sample.y * sample.y) + (sample.z * sample.z));
+    Serial.printf("accel hz=%lu fail=%lu raw=%d,%d,%d g=%.2f,%.2f,%.2f mag=%.2f\n",
+                  (unsigned long)accelSamplesSinceDebug,
+                  (unsigned long)accelReadFailuresSinceDebug,
+                  latestAccelRawX, latestAccelRawY, latestAccelRawZ,
+                  sample.x, sample.y, sample.z, magnitude);
+    if (accelRegisterDumpsLeft > 0) {
+      uint8_t regs[14] = {};
+      if (qmiReadRegister(0x30, regs, sizeof(regs))) {
+        Serial.print("qmi 30-3D=");
+        for (uint8_t i = 0; i < sizeof(regs); ++i) {
+          if (regs[i] < 16) {
+            Serial.print('0');
+          }
+          Serial.print(regs[i], HEX);
+          Serial.print(i == sizeof(regs) - 1 ? '\n' : ' ');
+        }
+        --accelRegisterDumpsLeft;
+      }
+    }
+    accelSamplesSinceDebug = 0;
+    accelReadFailuresSinceDebug = 0;
+    lastAccelDebugMs = now;
+  }
 }
 
 static void readMicSamples()
 {
   int32_t samples[AUDIO_BLOCK_SAMPLES];
   size_t bytesRead = 0;
-  const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(24));
+  const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(8));
   if (result != ESP_OK || bytesRead == 0) {
     sendDisplayPoint(0.0f);
     return;
@@ -858,6 +913,7 @@ static void drainAcquisitionQueues()
 static void acquisitionTask(void *)
 {
   for (;;) {
+    readAccelSample();
     readMicSamples();
     readAccelSample();
   }
