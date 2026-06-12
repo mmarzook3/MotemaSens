@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import re
 import statistics
 import threading
 import time
+import wave
 from pathlib import Path
 
 import serial
@@ -28,20 +30,33 @@ END_RE = re.compile(
 )
 
 
-def play_tone(frequency_hz: int, duration_s: int) -> None:
+def play_tone(frequency_hz: int, duration_s: int, volume: float, output_dir: Path) -> None:
     if winsound is None:
         raise RuntimeError("winsound is required to generate tones on Windows")
-    winsound.Beep(int(frequency_hz), int(duration_s * 1000))
+    sample_rate = 44100
+    sample_count = int(sample_rate * duration_s)
+    amplitude = int(max(0.0, min(volume, 1.0)) * 32767)
+    wav_path = output_dir / f"generated_{frequency_hz}hz_{duration_s}s.wav"
+    with wave.open(str(wav_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(sample_count):
+            sample = int(amplitude * math.sin(2.0 * math.pi * frequency_hz * index / sample_rate))
+            frames.extend(sample.to_bytes(2, byteorder="little", signed=True))
+        handle.writeframes(frames)
+    winsound.PlaySound(str(wav_path), winsound.SND_FILENAME)
 
 
-def capture(port: str, output: Path, duration_s: int, frequency_hz: int | None) -> list[str]:
+def capture(port: str, output: Path, duration_s: int, frequency_hz: int | None, tone_volume: float) -> list[str]:
     tone_thread = None
     ser = serial.Serial(port, 115200, timeout=0.2)
     try:
       time.sleep(1.0)
       ser.reset_input_buffer()
       if frequency_hz is not None:
-          tone_thread = threading.Thread(target=play_tone, args=(frequency_hz, duration_s), daemon=True)
+          tone_thread = threading.Thread(target=play_tone, args=(frequency_hz, duration_s, tone_volume, output.parent), daemon=True)
           tone_thread.start()
           time.sleep(0.15)
       ser.write(b"S")
@@ -178,6 +193,7 @@ def main() -> int:
     parser.add_argument("--duration", type=int, default=60)
     parser.add_argument("--output-dir", default=r"C:\codex\MotemaSens\test_logs\frequency_calibration")
     parser.add_argument("--frequencies", default="60,80,100,120,150,200,250,300")
+    parser.add_argument("--tone-volume", type=float, default=0.18, help="Generated sine amplitude from 0.0 to 1.0")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -190,7 +206,7 @@ def main() -> int:
     for name, frequency in plan:
         raw_path = output_dir / f"{name}_100hz_60s.csv"
         print(f"CAPTURE {name} -> {raw_path}")
-        capture(args.port, raw_path, args.duration, frequency)
+        capture(args.port, raw_path, args.duration, frequency, args.tone_volume)
         summary = summarize(raw_path)
         summary["test"] = name
         summary["frequency_hz"] = frequency or 0

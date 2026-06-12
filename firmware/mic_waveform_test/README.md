@@ -89,11 +89,12 @@ The firmware prints:
 For mic/filter calibration, run ambient first and then generated PC tones:
 
 ```powershell
-python tools\run_frequency_calibration.py --port COM14 --frequencies 60,80,100,120,150,200,250,300
+python tools\run_frequency_calibration.py --port COM14 --tone-volume 0.18 --frequencies 60,80,100,120,150,200,250,300
 ```
 
 The tool stores raw logs and writes a calibration CSV and Markdown report under `test_logs\frequency_calibration`.
 Each capture resets the detector BPM, envelope, threshold and beat timing state so rows do not carry state from the previous capture.
+Generated tones are sine-wave WAV files with software-controlled amplitude; lower `--tone-volume` if the report shows saturation.
 
 ## Heart-sound filtering
 
