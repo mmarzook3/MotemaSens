@@ -6,6 +6,9 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <driver/i2s.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <math.h>
 
 #if __has_include("local_secrets.h")
@@ -50,6 +53,12 @@ static constexpr uint32_t SAMPLE_RATE = 16000;
 static constexpr size_t AUDIO_BLOCK_SAMPLES = 192;
 static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 4;
 static constexpr size_t LABEL_HISTORY = 8;
+static constexpr uint8_t ACQUISITION_CORE = 0;
+static constexpr uint8_t OUTPUT_CORE = 1;
+static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
+static constexpr uint32_t OUTPUT_TASK_STACK = 12288;
+static constexpr UBaseType_t ACQUISITION_TASK_PRIORITY = 3;
+static constexpr UBaseType_t OUTPUT_TASK_PRIORITY = 1;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
@@ -79,6 +88,7 @@ static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
 static float autoGain = 10.0f;
+static float acquisitionBpm = 0.0f;
 static float bpm = 0.0f;
 static uint32_t lastBeatMs = 0;
 static bool beatArmed = true;
@@ -88,10 +98,19 @@ static bool ledGreenOn = false;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static Preferences preferences;
+static QueueHandle_t displayPointQueue = nullptr;
+static QueueHandle_t beatEventQueue = nullptr;
 
 struct HeartLabel {
   int x;
   char text[3];
+};
+
+struct BeatEvent {
+  uint32_t intervalMs;
+  float bpm;
+  float level;
+  float gain;
 };
 
 static HeartLabel labels[LABEL_HISTORY] = {};
@@ -179,6 +198,32 @@ static void addHeartLabel()
   label.text[1] = nextLabelIsS1 ? '1' : '2';
   label.text[2] = '\0';
   nextLabelIsS1 = !nextLabelIsS1;
+}
+
+static void sendDisplayPoint(float point)
+{
+  if (!displayPointQueue) {
+    return;
+  }
+
+  if (xQueueSend(displayPointQueue, &point, 0) != pdTRUE) {
+    float dropped = 0.0f;
+    xQueueReceive(displayPointQueue, &dropped, 0);
+    xQueueSend(displayPointQueue, &point, 0);
+  }
+}
+
+static void sendBeatEvent(const BeatEvent &event)
+{
+  if (!beatEventQueue) {
+    return;
+  }
+
+  if (xQueueSend(beatEventQueue, &event, 0) != pdTRUE) {
+    BeatEvent dropped = {};
+    xQueueReceive(beatEventQueue, &dropped, 0);
+    xQueueSend(beatEventQueue, &event, 0);
+  }
 }
 
 static void scrollHeartLabels()
@@ -425,15 +470,14 @@ static void updateBeatDetector(float energy)
   }
 
   beatArmed = false;
-  addHeartLabel();
 
   if (lastBeatMs > 0) {
     const uint32_t intervalMs = now - lastBeatMs;
     if (intervalMs >= 480 && intervalMs <= 2000) {
       const float instantBpm = 60000.0f / (float)intervalMs;
-      bpm = (bpm <= 0.0f) ? instantBpm : (bpm * 0.78f) + (instantBpm * 0.22f);
-      Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
-                    (unsigned long)intervalMs, bpm, beatEnvelope, autoGain);
+      acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
+      BeatEvent event = {intervalMs, acquisitionBpm, beatEnvelope, autoGain};
+      sendBeatEvent(event);
     }
   }
 
@@ -446,7 +490,7 @@ static void readMicSamples()
   size_t bytesRead = 0;
   const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(24));
   if (result != ESP_OK || bytesRead == 0) {
-    pushWavePoint(0.0f);
+    sendDisplayPoint(0.0f);
     return;
   }
 
@@ -505,7 +549,7 @@ static void readMicSamples()
     float displayPoint = constrain((chunkPeaks[i] / 12000.0f) * autoGain, 0.0f, 1.0f);
     displayPoint = constrain(powf(displayPoint, 0.68f) * 0.86f, 0.0f, 0.96f) * sign;
     displaySample += 0.70f * (displayPoint - displaySample);
-    pushWavePoint(displaySample);
+    sendDisplayPoint(displaySample);
   }
 }
 
@@ -551,6 +595,52 @@ static void updateDeviceHeartbeatLed(uint32_t now)
   digitalWrite(LED_GREEN, ledGreenOn ? HIGH : LOW);
 }
 
+static void drainAcquisitionQueues()
+{
+  float point = 0.0f;
+  while (xQueueReceive(displayPointQueue, &point, 0) == pdTRUE) {
+    pushWavePoint(point);
+  }
+
+  BeatEvent event = {};
+  while (xQueueReceive(beatEventQueue, &event, 0) == pdTRUE) {
+    addHeartLabel();
+    bpm = event.bpm;
+    Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
+                  (unsigned long)event.intervalMs, event.bpm, event.level, event.gain);
+  }
+}
+
+static void acquisitionTask(void *)
+{
+  for (;;) {
+    readMicSamples();
+  }
+}
+
+static void outputTask(void *)
+{
+  for (;;) {
+    const uint32_t now = millis();
+    updateDeviceHeartbeatLed(now);
+
+    if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
+      otaCheckedOnce = true;
+      lastOtaCheckMs = now;
+      checkForOtaUpdate();
+    }
+
+    drainAcquisitionQueues();
+
+    if (now - lastDrawMs >= 24) {
+      lastDrawMs = now;
+      drawWaveform();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -577,24 +667,23 @@ void setup()
     point = 0.0f;
   }
 
-  Serial.println("mic waveform test running");
+  displayPointQueue = xQueueCreate(96, sizeof(float));
+  beatEventQueue = xQueueCreate(12, sizeof(BeatEvent));
+  if (!displayPointQueue || !beatEventQueue) {
+    Serial.println("queue create failed");
+    ESP.restart();
+  }
+
+  xTaskCreatePinnedToCore(acquisitionTask, "acquisition", ACQUISITION_TASK_STACK, nullptr,
+                          ACQUISITION_TASK_PRIORITY, nullptr, ACQUISITION_CORE);
+  xTaskCreatePinnedToCore(outputTask, "output", OUTPUT_TASK_STACK, nullptr,
+                          OUTPUT_TASK_PRIORITY, nullptr, OUTPUT_CORE);
+
+  Serial.printf("mic waveform test running, acquisition core=%u output core=%u\n",
+                ACQUISITION_CORE, OUTPUT_CORE);
 }
 
 void loop()
 {
-  const uint32_t now = millis();
-  updateDeviceHeartbeatLed(now);
-
-  if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
-    otaCheckedOnce = true;
-    lastOtaCheckMs = now;
-    checkForOtaUpdate();
-  }
-
-  readMicSamples();
-
-  if (now - lastDrawMs >= 24) {
-    lastDrawMs = now;
-    drawWaveform();
-  }
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }

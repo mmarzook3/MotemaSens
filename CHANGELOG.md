@@ -26,3 +26,5 @@
 - Reduced heartbeat display saturation and made the envelope graph scroll faster again.
 - Added GPIO14 green LED heartbeat blink every second so the running firmware is easy to confirm.
 - Changed the heartbeat display to a signed phonocardiogram-style trace with S1/S2 labels.
+- Split the firmware into acquisition and output tasks pinned to separate ESP32-S3 cores, with queues between them.
+- Added firmware architecture documentation so the acquisition/output split stays clear during development.
