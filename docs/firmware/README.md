@@ -31,12 +31,12 @@ The acquisition task must always be able to keep reading sensors. If SD card, Wi
 
 ## Current implementation
 
-The current `firmware/mic_waveform_test` firmware implements the pattern with two pinned FreeRTOS tasks:
+The current `firmware/mic_waveform_test` firmware implements the pattern with pinned FreeRTOS tasks:
 
 | Task | Core | Priority | Current purpose |
 | --- | --- | --- | --- |
-| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
-| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD mic/accelerometer graph, handles WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
+| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads ADS1294 ECG, I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
+| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD ECG/mic/accelerometer graph, handles USB logging and WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
 
 The current queues are:
 
@@ -45,8 +45,20 @@ The current queues are:
 | `displayPointQueue` | `acquisitionTask` | `outputTask` | Signed waveform point for the LCD trace |
 | `beatEventQueue` | `acquisitionTask` | `outputTask` | Beat interval, BPM estimate, signal level and gain |
 | `accelSampleQueue` | `acquisitionTask` | `outputTask` | QMI8658 X/Y/Z acceleration in g |
+| `ecgSampleQueue` | `acquisitionTask` | `outputTask` | ADS1294 DRDY-timed status plus raw CH1-CH4 signed 24-bit samples |
 
 If a queue is full, the oldest queued item is dropped before pushing the newest item. This keeps the newest live data visible and stops the acquisition task from blocking.
+
+The current dev firmware keeps sensor code in separate modules under `firmware/mic_waveform_test/src`:
+
+- `mic_sensor.*`
+- `accel_sensor.*`
+- `ecg_ads1294.*`
+- `sensor_config.h`
+
+Each sensor can be disabled at build time with `ENABLE_MIC_SENSOR`, `ENABLE_ACCEL_SENSOR` or `ENABLE_ECG_SENSOR`.
+
+The ECG module must not invent samples on a software timer. ADS1294 samples are accepted only while `ECG_DRDY` is low, with a 10 ms minimum frame-period guard so the same conversion is not read repeatedly and the current dev log remains 100 Hz. If the ADS1294 ID/config registers are readable but DRDY does not arrive, the firmware reports `ECG_WAIT_DRDY` over serial so hardware clock/start/DRDY wiring can be checked before logging real ECG.
 
 ## Future full product layout
 

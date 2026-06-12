@@ -5,12 +5,15 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <Wire.h>
-#include <driver/i2s.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <math.h>
+
+#include "accel_sensor.h"
+#include "ecg_ads1294.h"
+#include "mic_sensor.h"
+#include "sensor_config.h"
 
 #if __has_include("local_secrets.h")
 #include "local_secrets.h"
@@ -32,34 +35,8 @@
 #define OTA_MANIFEST_URL ""
 #endif
 
-// Waveshare ESP32-S3-LCD-1.28 display pins.
-static constexpr int LCD_DC = 8;
-static constexpr int LCD_CS = 9;
-static constexpr int LCD_SCLK = 10;
-static constexpr int LCD_MOSI = 11;
-static constexpr int LCD_RST = 12;
-static constexpr int LCD_BL = 40;
-
-// Custom Lobe PCB SPH0645LM4H-B mic pins.
-static constexpr int I2S_DATA = 3;
-static constexpr int I2S_BCLK = 4;
-static constexpr int I2S_WS = 5;
-
-// Custom Lobe PCB status LED.
-static constexpr int LED_GREEN = 14;
-static constexpr int LED_BLUE = 15;
-
-// Waveshare base-board QMI8658 IMU pins.
-static constexpr int IMU_SDA = 6;
-static constexpr int IMU_SCL = 7;
-
-static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
-static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
-static constexpr uint32_t SAMPLE_RATE = 16000;
-static constexpr size_t AUDIO_BLOCK_SAMPLES = 64;
 static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 2;
 static constexpr size_t LABEL_HISTORY = 8;
-static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
@@ -83,10 +60,12 @@ static constexpr int CENTER_Y = SCREEN_H / 2;
 static constexpr int SAFE_RADIUS = 102;
 static constexpr int HEADER_BOTTOM = 42;
 static constexpr int WAVE_MARGIN = 12;
-static constexpr int ACCEL_GRAPH_CENTER_Y = 88;
-static constexpr int ACCEL_GRAPH_HALF_H = 32;
-static constexpr int MIC_GRAPH_CENTER_Y = 156;
-static constexpr int MIC_GRAPH_HALF_H = 42;
+static constexpr int ECG_GRAPH_CENTER_Y = 88;
+static constexpr int ECG_GRAPH_HALF_H = 34;
+static constexpr int MIC_GRAPH_CENTER_Y = 151;
+static constexpr int MIC_GRAPH_HALF_H = 24;
+static constexpr int ACCEL_GRAPH_CENTER_Y = 196;
+static constexpr int ACCEL_GRAPH_HALF_H = 18;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -103,22 +82,18 @@ Arduino_GFX *display = new Arduino_GC9A01(bus, LCD_RST, 0, true);
 Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, SCREEN_H, display);
 
 static float wave[SCREEN_W];
+static float ecgWave[SCREEN_W];
 static float accelXHistory[ACCEL_HISTORY];
 static float accelYHistory[ACCEL_HISTORY];
 static float accelZHistory[ACCEL_HISTORY];
 static float latestAccelX = 0.0f;
 static float latestAccelY = 0.0f;
 static float latestAccelZ = 0.0f;
-static float dc = 0.0f;
-static float lowFast = 0.0f;
-static float lowSlow = 0.0f;
 static float smoothedLevel = 0.0f;
-static float displaySample = 0.0f;
 static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
 static float beatPeak = 0.0f;
-static float autoGain = 10.0f;
 static float acquisitionBpm = 0.0f;
 static float bpm = 0.0f;
 static float motionLevel = 0.0f;
@@ -143,22 +118,31 @@ static uint32_t lastAccelReadMs = 0;
 static uint32_t lastAccelDebugMs = 0;
 static uint32_t accelSamplesSinceDebug = 0;
 static uint32_t accelReadFailuresSinceDebug = 0;
-static uint8_t accelRegisterDumpsLeft = 6;
 static int16_t latestAccelRawX = 0;
 static int16_t latestAccelRawY = 0;
 static int16_t latestAccelRawZ = 0;
 static float latestMicPoint = 0.0f;
+static int32_t latestEcgCh1 = 0;
+static int32_t latestEcgCh2 = 0;
+static int32_t latestEcgCh3 = 0;
+static int32_t latestEcgCh4 = 0;
+static uint32_t latestEcgStatus = 0;
+static uint32_t latestEcgSequence = 0;
+static float ecgBaseline = 0.0f;
+static float ecgScale = 80000.0f;
 static bool usbLogActive = false;
 static uint32_t usbLogStartMs = 0;
 static uint32_t usbLogLastSampleMs = 0;
 static uint32_t usbLogSamples = 0;
 static uint32_t usbLogBeats = 0;
-static bool imuReady = false;
-static uint8_t imuAddress = 0x6A;
 static Preferences preferences;
+static MicSensor micSensor;
+static AccelSensor accelSensor;
+static EcgAds1294 ecgSensor;
 static QueueHandle_t displayPointQueue = nullptr;
 static QueueHandle_t beatEventQueue = nullptr;
 static QueueHandle_t accelSampleQueue = nullptr;
+static QueueHandle_t ecgSampleQueue = nullptr;
 
 struct HeartLabel {
   int x;
@@ -171,13 +155,6 @@ struct BeatEvent {
   float bpm;
   float level;
   float gain;
-};
-
-struct AccelSample {
-  float x;
-  float y;
-  float z;
-  bool valid;
 };
 
 static HeartLabel labels[LABEL_HISTORY] = {};
@@ -271,8 +248,8 @@ static void drawBackground()
     gfx->fillCircle(versionX + (versionText.length() * 6) + 8, 13, 2, COLOR_WIFI);
   }
 
-  gfx->setCursor(99, 23);
-  gfx->print("MIC ACC");
+  gfx->setCursor(91, 23);
+  gfx->print("ECG MIC ACC");
 
   gfx->setCursor(58, 35);
   gfx->setTextColor(COLOR_X, COLOR_BG);
@@ -288,6 +265,18 @@ static void drawBackground()
   gfx->print(latestAccelY, 1);
   gfx->print(" ");
   gfx->print(latestAccelZ, 1);
+}
+
+static void drawStatusLine()
+{
+  gfx->setTextSize(1);
+  gfx->setTextColor(ecgSensor.ready() ? COLOR_WIFI : COLOR_X, COLOR_BG);
+  gfx->setCursor(42, 35);
+  gfx->print("ECG");
+  gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  gfx->print(" #");
+  gfx->print(latestEcgSequence);
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
 }
 
 static void drawBandGrid(int graphCenterY, int graphHalfHeight)
@@ -638,12 +627,15 @@ static void startUsbLiveLog(uint32_t now)
   lastBeatMs = 0;
   beatArmed = true;
   beatCandidateActive = false;
+  micSensor.resetDetectorState();
+  ecgBaseline = 0.0f;
+  ecgScale = 80000.0f;
 
   Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
                 DEVICE_VERSION,
                 (unsigned long)USB_LOG_DURATION_MS,
                 (unsigned long)USB_LOG_PERIOD_MS);
-  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z");
+  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4");
 }
 
 static void stopUsbLiveLog(uint32_t now, const char *reason)
@@ -692,7 +684,7 @@ static void updateUsbLiveLog(uint32_t now)
   }
   ++usbLogSamples;
 
-  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d\n",
+  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld\n",
                 (unsigned long)elapsedMs,
                 latestMicPoint,
                 smoothedLevel,
@@ -705,7 +697,13 @@ static void updateUsbLiveLog(uint32_t now)
                 latestAccelZ,
                 latestAccelRawX,
                 latestAccelRawY,
-                latestAccelRawZ);
+                latestAccelRawZ,
+                (unsigned long)latestEcgSequence,
+                (unsigned long)latestEcgStatus,
+                (long)latestEcgCh1,
+                (long)latestEcgCh2,
+                (long)latestEcgCh3,
+                (long)latestEcgCh4);
 }
 
 static void drawWaveform()
@@ -814,20 +812,25 @@ static void drawAccelGraph()
 static void drawCombinedGraph()
 {
   drawBackground();
-  drawBandGrid(ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H);
+  drawStatusLine();
+  drawBandGrid(ECG_GRAPH_CENTER_Y, ECG_GRAPH_HALF_H);
   drawBandGrid(MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H);
+  drawBandGrid(ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H);
 
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
-  gfx->print("ACC");
+  gfx->setCursor(45, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
+  gfx->print("ECG CH1 RAW");
   gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
   gfx->print("MIC");
+  gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
+  gfx->print("ACC");
 
+  drawTraceInBand(ecgWave, 1.0f, ECG_GRAPH_CENTER_Y, ECG_GRAPH_HALF_H, COLOR_WAVE);
+  drawTraceInBand(wave, 1.0f, MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H, COLOR_Y);
   drawTraceInBand(accelXHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_X);
   drawTraceInBand(accelYHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Y);
   drawTraceInBand(accelZHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Z);
-  drawTraceInBand(wave, 1.0f, MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H, COLOR_WAVE);
 
   gfx->flush();
 }
@@ -838,6 +841,50 @@ static void pushWavePoint(float sample)
   const float softened = (wave[SCREEN_W - 2] * 0.18f) + (sample * 0.82f);
   wave[SCREEN_W - 1] = constrain(softened, -1.0f, 1.0f);
   scrollHeartLabels();
+}
+
+static void pushEcgSample(const EcgSample &sample)
+{
+  if (!sample.valid) {
+    return;
+  }
+
+  latestEcgSequence = sample.sequence;
+  latestEcgStatus = sample.status;
+  latestEcgCh1 = sample.channels[0];
+  latestEcgCh2 = sample.channels[1];
+  latestEcgCh3 = sample.channels[2];
+  latestEcgCh4 = sample.channels[3];
+
+  const float raw = (float)sample.channels[0];
+  ecgBaseline += 0.002f * (raw - ecgBaseline);
+  const float centered = raw - ecgBaseline;
+  ecgScale = max(50000.0f, ecgScale * 0.995f);
+  ecgScale = max(ecgScale, fabsf(centered) * 1.15f);
+
+  memmove(&ecgWave[0], &ecgWave[1], sizeof(ecgWave) - sizeof(ecgWave[0]));
+  ecgWave[SCREEN_W - 1] = constrain(centered / ecgScale, -1.0f, 1.0f);
+}
+
+static void sendEcgSample(const EcgSample &sample)
+{
+  if (!ecgSampleQueue) {
+    return;
+  }
+
+  if (xQueueSend(ecgSampleQueue, &sample, 0) != pdTRUE) {
+    EcgSample dropped = {};
+    xQueueReceive(ecgSampleQueue, &dropped, 0);
+    xQueueSend(ecgSampleQueue, &sample, 0);
+  }
+}
+
+static void readEcgSample()
+{
+  EcgSample sample = {};
+  if (ecgSensor.poll(sample)) {
+    sendEcgSample(sample);
+  }
 }
 
 static void updateBeatDetector(float energy)
@@ -863,7 +910,7 @@ static void updateBeatDetector(float energy)
     if (beatEnvelope > beatCandidatePeakLevel) {
       beatCandidatePeakLevel = beatEnvelope;
       beatCandidatePeakMs = now;
-      beatCandidatePeakGain = autoGain;
+      beatCandidatePeakGain = micSensor.autoGain();
     }
 
     const bool peakHasSettled = beatEnvelope < beatCandidatePeakLevel * 0.78f;
@@ -889,138 +936,21 @@ static void updateBeatDetector(float energy)
   beatCandidateStartMs = now;
   beatCandidatePeakMs = now;
   beatCandidatePeakLevel = beatEnvelope;
-  beatCandidatePeakGain = autoGain;
-}
-
-static bool qmiWriteRegister(uint8_t reg, uint8_t value)
-{
-  Wire.beginTransmission(imuAddress);
-  Wire.write(reg);
-  Wire.write(value);
-  return Wire.endTransmission() == 0;
-}
-
-static bool qmiReadRegister(uint8_t reg, uint8_t *buffer, uint8_t length)
-{
-  Wire.beginTransmission(imuAddress);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-
-  const uint8_t received = Wire.requestFrom(imuAddress, length);
-  if (received != length) {
-    return false;
-  }
-
-  for (uint8_t i = 0; i < length; ++i) {
-    buffer[i] = Wire.read();
-  }
-  return true;
-}
-
-static bool qmiReadByte(uint8_t address, uint8_t reg, uint8_t &value)
-{
-  Wire.beginTransmission(address);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-
-  if (Wire.requestFrom(address, (uint8_t)1) != 1) {
-    return false;
-  }
-
-  value = Wire.read();
-  return true;
-}
-
-static int16_t qmiInt16(uint8_t lo, uint8_t hi)
-{
-  return (int16_t)(((uint16_t)hi << 8) | lo);
-}
-
-static bool setupQmi8658()
-{
-  Wire.begin(IMU_SDA, IMU_SCL);
-  Wire.setClock(400000);
-  delay(20);
-
-  uint8_t who = 0;
-  for (uint8_t address : { (uint8_t)0x6A, (uint8_t)0x6B }) {
-    if (qmiReadByte(address, 0x00, who) && who == 0x05) {
-      imuAddress = address;
-      break;
-    }
-  }
-
-  if (who != 0x05) {
-    Serial.println("QMI8658 not found");
-    return false;
-  }
-
-  qmiWriteRegister(0x02, 0x80);
-  delay(50);
-
-  // Follow the common QMI8658 driver sequence:
-  // CTRL1 auto-increment, CTRL2 accel +/-8g at 1000 Hz, CTRL3 gyro 512 dps at 1000 Hz.
-  // Gyro is enabled too because this keeps the standard 12-byte sensor data path active.
-  const bool ok = qmiWriteRegister(0x02, 0x60) &&
-                  qmiWriteRegister(0x08, 0x00) &&
-                  qmiWriteRegister(0x03, 0x23) &&
-                  qmiWriteRegister(0x04, 0x43) &&
-                  qmiWriteRegister(0x08, 0x03);
-  if (ok) {
-    Serial.printf("QMI8658 ready at 0x%02X, accel +/-8g 1000Hz\n", imuAddress);
-  } else {
-    Serial.println("QMI8658 init failed");
-  }
-  return ok;
-}
-
-static bool readQmi8658Accel(float &x, float &y, float &z)
-{
-  uint8_t status = 0;
-  if (!qmiReadRegister(0x2E, &status, 1) || (status & 0x01) == 0) {
-    return false;
-  }
-
-  uint8_t buffer[6] = {};
-  if (!qmiReadRegister(0x35, buffer, sizeof(buffer))) {
-    return false;
-  }
-
-  const int16_t rawX = qmiInt16(buffer[0], buffer[1]);
-  const int16_t rawY = qmiInt16(buffer[2], buffer[3]);
-  const int16_t rawZ = qmiInt16(buffer[4], buffer[5]);
-
-  latestAccelRawX = rawX;
-  latestAccelRawY = rawY;
-  latestAccelRawZ = rawZ;
-
-  // +/-8g full scale uses 4096 LSB/g.
-  x = (float)rawX / 4096.0f;
-  y = (float)rawY / 4096.0f;
-  z = (float)rawZ / 4096.0f;
-  return true;
+  beatCandidatePeakGain = micSensor.autoGain();
 }
 
 static void readAccelSample()
 {
-  if (!imuReady) {
-    return;
-  }
-
-  const uint32_t now = millis();
-  if (now - lastAccelReadMs < ACCEL_SAMPLE_PERIOD_MS) {
-    return;
-  }
-  lastAccelReadMs = now;
-
   AccelSample sample = {};
-  sample.valid = readQmi8658Accel(sample.x, sample.y, sample.z);
+  const uint32_t now = millis();
+  if (!accelSensor.poll(now, sample)) {
+    return;
+  }
   if (sample.valid) {
     ++accelSamplesSinceDebug;
+    latestAccelRawX = sample.rawX;
+    latestAccelRawY = sample.rawY;
+    latestAccelRawZ = sample.rawZ;
     sendAccelSample(sample);
   } else {
     ++accelReadFailuresSinceDebug;
@@ -1033,20 +963,6 @@ static void readAccelSample()
                   (unsigned long)accelReadFailuresSinceDebug,
                   latestAccelRawX, latestAccelRawY, latestAccelRawZ,
                   sample.x, sample.y, sample.z, magnitude);
-    if (accelRegisterDumpsLeft > 0) {
-      uint8_t regs[14] = {};
-      if (qmiReadRegister(0x30, regs, sizeof(regs))) {
-        Serial.print("qmi 30-3D=");
-        for (uint8_t i = 0; i < sizeof(regs); ++i) {
-          if (regs[i] < 16) {
-            Serial.print('0');
-          }
-          Serial.print(regs[i], HEX);
-          Serial.print(i == sizeof(regs) - 1 ? '\n' : ' ');
-        }
-        --accelRegisterDumpsLeft;
-      }
-    }
     accelSamplesSinceDebug = 0;
     accelReadFailuresSinceDebug = 0;
     lastAccelDebugMs = now;
@@ -1055,102 +971,20 @@ static void readAccelSample()
 
 static void readMicSamples()
 {
-  int32_t samples[AUDIO_BLOCK_SAMPLES];
-  size_t bytesRead = 0;
-  const esp_err_t result = i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(8));
-  if (result != ESP_OK || bytesRead == 0) {
-    sendDisplayPoint(0.0f);
+  MicFrame frame = {};
+  if (!micSensor.readFrame(frame)) {
+    for (size_t i = 0; i < frame.displayPointCount; ++i) {
+      sendDisplayPoint(frame.displayPoints[i]);
+    }
     return;
   }
 
-  const size_t count = bytesRead / sizeof(samples[0]);
-  const size_t chunkSize = max<size_t>(1, count / DISPLAY_POINTS_PER_BLOCK);
-  float sumSq = 0.0f;
-  float absolutePeak = 0.0f;
-  float chunkPeaks[DISPLAY_POINTS_PER_BLOCK] = {};
-  float chunkSignedPeaks[DISPLAY_POINTS_PER_BLOCK] = {};
-
-  for (size_t i = 0; i < count; ++i) {
-    // SPH0645 data is 24-bit I2S in a 32-bit slot. Keep the low-frequency body sound band.
-    const float sample = (float)(samples[i] >> 14);
-    dc += 0.00020f * (sample - dc);
-    const float centered = sample - dc;
-
-    lowFast += 0.052f * (centered - lowFast);
-    lowSlow += 0.006f * (centered - lowSlow);
-    const float heartBand = lowFast - lowSlow;
-
-    sumSq += heartBand * heartBand;
-
-    const float magnitude = fabsf(heartBand);
-    if (magnitude > absolutePeak) {
-      absolutePeak = magnitude;
-    }
-
-    size_t chunk = i / chunkSize;
-    if (chunk >= DISPLAY_POINTS_PER_BLOCK) {
-      chunk = DISPLAY_POINTS_PER_BLOCK - 1;
-    }
-    if (magnitude > chunkPeaks[chunk]) {
-      chunkPeaks[chunk] = magnitude;
-      chunkSignedPeaks[chunk] = heartBand;
-    }
-  }
-
-  const float rms = sqrtf(sumSq / max<size_t>(1, count));
-  float normalized = max(rms / 4200.0f, absolutePeak / 16000.0f);
-
-  // Heart sounds are much smaller than speech. Keep AGC slow so each beat shape stays natural.
-  const float target = normalized * autoGain;
-  if (target > 0.48f) {
-    autoGain *= 0.965f;
-  } else if (target < 0.13f) {
-    autoGain *= 1.0015f;
-  }
-  autoGain = constrain(autoGain, 3.0f, 36.0f);
-
-  normalized = constrain(normalized * autoGain, 0.0f, 1.0f);
-  smoothedLevel = (smoothedLevel * 0.88f) + (normalized * 0.12f);
+  smoothedLevel = frame.normalizedLevel;
   updateBeatDetector(smoothedLevel);
 
-  for (size_t i = 0; i < DISPLAY_POINTS_PER_BLOCK; ++i) {
-    const float sign = (chunkSignedPeaks[i] >= 0.0f) ? 1.0f : -1.0f;
-    float displayPoint = constrain((chunkPeaks[i] / 12000.0f) * autoGain, 0.0f, 1.0f);
-    displayPoint = constrain(powf(displayPoint, 0.68f) * 0.86f, 0.0f, 0.96f) * sign;
-    displaySample += 0.70f * (displayPoint - displaySample);
-    sendDisplayPoint(displaySample);
+  for (size_t i = 0; i < frame.displayPointCount; ++i) {
+    sendDisplayPoint(frame.displayPoints[i]);
   }
-}
-
-static void setupI2S()
-{
-  const i2s_config_t config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-    .channel_format = I2S_CHANNEL,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 6,
-    .dma_buf_len = 256,
-    .use_apll = false,
-    .tx_desc_auto_clear = false,
-    .fixed_mclk = 0,
-    .mclk_multiple = I2S_MCLK_MULTIPLE_256,
-    .bits_per_chan = I2S_BITS_PER_CHAN_32BIT
-  };
-
-  const i2s_pin_config_t pins = {
-    .mck_io_num = I2S_PIN_NO_CHANGE,
-    .bck_io_num = I2S_BCLK,
-    .ws_io_num = I2S_WS,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num = I2S_DATA
-  };
-
-  ESP_ERROR_CHECK(i2s_driver_install(I2S_PORT, &config, 0, nullptr));
-  ESP_ERROR_CHECK(i2s_set_pin(I2S_PORT, &pins));
-  ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
 }
 
 static void updateDeviceHeartbeatLed(uint32_t now)
@@ -1194,13 +1028,20 @@ static void drainAcquisitionQueues()
   while (xQueueReceive(accelSampleQueue, &sample, 0) == pdTRUE) {
     pushAccelSample(sample);
   }
+
+  EcgSample ecgSample = {};
+  while (xQueueReceive(ecgSampleQueue, &ecgSample, 0) == pdTRUE) {
+    pushEcgSample(ecgSample);
+  }
 }
 
 static void acquisitionTask(void *)
 {
   for (;;) {
+    readEcgSample();
     readAccelSample();
     readMicSamples();
+    readEcgSample();
     readAccelSample();
   }
 }
@@ -1252,10 +1093,14 @@ void setup()
   connectWifi();
   drawBackground();
   gfx->flush();
-  imuReady = setupQmi8658();
-  setupI2S();
+  accelSensor.begin();
+  ecgSensor.begin();
+  micSensor.begin();
 
   for (float &point : wave) {
+    point = 0.0f;
+  }
+  for (float &point : ecgWave) {
     point = 0.0f;
   }
   for (float &point : accelXHistory) {
@@ -1271,7 +1116,8 @@ void setup()
   displayPointQueue = xQueueCreate(96, sizeof(float));
   beatEventQueue = xQueueCreate(12, sizeof(BeatEvent));
   accelSampleQueue = xQueueCreate(64, sizeof(AccelSample));
-  if (!displayPointQueue || !beatEventQueue || !accelSampleQueue) {
+  ecgSampleQueue = xQueueCreate(128, sizeof(EcgSample));
+  if (!displayPointQueue || !beatEventQueue || !accelSampleQueue || !ecgSampleQueue) {
     Serial.println("queue create failed");
     ESP.restart();
   }
@@ -1281,7 +1127,7 @@ void setup()
   xTaskCreatePinnedToCore(outputTask, "output", OUTPUT_TASK_STACK, nullptr,
                           OUTPUT_TASK_PRIORITY, nullptr, OUTPUT_CORE);
 
-  Serial.printf("mic and accel test running, acquisition core=%u output core=%u\n",
+  Serial.printf("mic accel ecg test running, acquisition core=%u output core=%u\n",
                 ACQUISITION_CORE, OUTPUT_CORE);
   Serial.println("usb live test ready: send S for 60 seconds, X to stop");
 }

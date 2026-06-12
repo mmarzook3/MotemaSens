@@ -2,8 +2,8 @@
 
 This is a quick test software for the custom Lobe ESP32-S3 board.
 
-It reads the SPH0645LM4H-B I2S mic and the Waveshare onboard QMI8658 accelerometer.
-The round LCD currently shows both live sensors: QMI8658 X/Y/Z accelerometer on the upper graph and the mic waveform on the lower graph.
+It reads the SPH0645LM4H-B I2S mic, the Waveshare onboard QMI8658 accelerometer and the custom-board ADS1294 ECG front end.
+The round LCD currently shows raw ECG CH1 on the upper graph, mic on the middle graph and QMI8658 X/Y/Z accelerometer on the lower graph.
 
 It also connects to WiFi. Dev builds are flashed directly over USB and do not run OTA while `DEVICE_VERSION` is `local-dev`.
 OTA is only for major tagged releases or manually triggered release builds.
@@ -12,9 +12,22 @@ OTA is only for major tagged releases or manually triggered release builds.
 
 This test firmware follows the main firmware architecture in `../../docs/firmware/README.md`.
 
-- `acquisitionTask` is pinned to Core 0. It reads/processes the mic and accelerometer and sends queue events.
-- `outputTask` is pinned to Core 1. It owns the combined LCD mic/accelerometer graph, WiFi OTA for release builds and GPIO14 green heartbeat LED.
+- `acquisitionTask` is pinned to Core 0. It reads ECG, mic and accelerometer with short guarded sensor reads and sends queue events.
+- `outputTask` is pinned to Core 1. It owns the combined LCD ECG/mic/accelerometer graph, USB logging, WiFi OTA for release builds and GPIO14 green heartbeat LED.
 - Acquisition never waits for LCD, WiFi, OTA or future SD/USB/BLE output.
+
+The sensor modules are split into separate files:
+
+- `mic_sensor.*` for SPH0645 I2S mic acquisition and mic display points.
+- `accel_sensor.*` for QMI8658 accelerometer acquisition.
+- `ecg_ads1294.*` for ADS1294 ECG SPI bring-up and raw sample frames.
+- `sensor_config.h` for enable flags and shared pin definitions.
+
+Compile-time enable flags:
+
+- `ENABLE_MIC_SENSOR`
+- `ENABLE_ACCEL_SENSOR`
+- `ENABLE_ECG_SENSOR`
 
 ## Hardware pins
 
@@ -34,6 +47,19 @@ Mic from custom PCB:
 - `I2S_WS` = GPIO5
 
 The mic `SELECT` pin is tied low, so the firmware reads the left/low-WS slot first.
+
+ADS1294 ECG from custom PCB:
+
+- `ECG_MOSI` = GPIO36
+- `ECG_MISO` = GPIO17
+- `ECG_SCLK` = GPIO18
+- `ECG_CS` = GPIO21
+- `ECG_DRDY` = GPIO16
+- `ECG_START` = GPIO33
+- `ECG_RESET` = GPIO34
+- `ECG_PWDN` = GPIO35
+
+The dev firmware holds the ECG pins in safe states, wakes/resets the ADS1294, reads the ID register, starts RDATAC mode and displays raw CH1 only when real DRDY frames arrive. The driver reads only while DRDY is low and uses a 10 ms minimum frame-period guard so the same conversion is not read repeatedly and ECG stays aligned to the 100 Hz USB log. If the ADS1294 is found but conversions are not arriving, serial prints `ECG_WAIT_DRDY` once per second with the DRDY pin level and sample counters.
 
 Waveshare onboard QMI8658 accelerometer:
 
@@ -80,7 +106,7 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM and accelerometer X/Y/Z.
+- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z and latest raw ECG CH1-CH4. ECG sequence and channel values advance only after ADS1294 DRDY frames are received.
 - `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 
