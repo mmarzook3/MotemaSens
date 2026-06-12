@@ -23,6 +23,9 @@ LOG_RE = re.compile(r"^LOG,")
 BEAT_RE = re.compile(
     r"^BEAT,(\d+),interval_ms=(\d+),bpm=([0-9.]+),level=([0-9.]+),gain=([0-9.]+)(?:,delay_ms=(\d+))?"
 )
+END_RE = re.compile(
+    r"^LIVE_TEST_END,reason=([^,]+),elapsed_ms=(\d+),samples=(\d+),beats=(\d+),rejected=(\d+),bpm=([0-9.]+)"
+)
 
 
 def play_tone(frequency_hz: int, duration_s: int) -> None:
@@ -91,8 +94,15 @@ def summarize(raw_path: Path) -> dict[str, float | int | str]:
         "file": raw_path.name,
         "rows": len(logs),
         "beats": len(beats),
+        "rejected": 0,
+        "final_bpm": 0.0,
         "end": end_line,
     }
+    end_match = END_RE.match(end_line)
+    if end_match:
+        result["beats"] = int(end_match.group(4))
+        result["rejected"] = int(end_match.group(5))
+        result["final_bpm"] = float(end_match.group(6))
     if logs:
         ms = [row[0] for row in logs]
         duration = (ms[-1] - ms[0]) / 1000.0 if len(ms) > 1 else 0.0
@@ -102,6 +112,7 @@ def summarize(raw_path: Path) -> dict[str, float | int | str]:
             result[f"{name}_mean"] = statistics.mean(values)
             result[f"{name}_max"] = max(values)
             result[f"{name}_sd"] = statistics.pstdev(values)
+        result["mic_level_saturation_pct"] = 100.0 * sum(1 for row in logs if row[2] >= 0.995) / len(logs)
     if beats:
         intervals = [row[1] for row in beats]
         result["interval_mean_ms"] = statistics.mean(intervals)
@@ -120,9 +131,12 @@ def write_reports(output_dir: Path, rows: list[dict[str, float | int | str]]) ->
         "rows",
         "rate_hz",
         "beats",
+        "rejected",
+        "final_bpm",
         "mic_trace_sd",
         "mic_level_mean",
         "mic_level_max",
+        "mic_level_saturation_pct",
         "envelope_mean",
         "envelope_max",
         "threshold_mean",
@@ -142,18 +156,19 @@ def write_reports(output_dir: Path, rows: list[dict[str, float | int | str]]) ->
         "",
         "Each capture is 60 seconds over USB at the firmware 100 Hz log rate.",
         "",
-        "| Test | Hz | Rows | Rate Hz | Beats | Mic level mean | Envelope mean | Threshold mean | Motion max |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Test | Hz | Rows | Rate Hz | Beats | Rejected | Mic level mean | Saturated % | Envelope mean | Threshold mean | Motion max |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {test} | {frequency_hz} | {rows} | {rate_hz:.2f} | {beats} | {mic_level_mean:.4f} | {envelope_mean:.4f} | {threshold_mean:.4f} | {motion_max:.4f} |".format(
+            "| {test} | {frequency_hz} | {rows} | {rate_hz:.2f} | {beats} | {rejected} | {mic_level_mean:.4f} | {mic_level_saturation_pct:.1f} | {envelope_mean:.4f} | {threshold_mean:.4f} | {motion_max:.4f} |".format(
                 **{key: row.get(key, 0) for key in fieldnames}
             )
         )
     lines.append("")
     lines.append("Use steady tones to confirm the detector does not report false heartbeats for continuous sound.")
     lines.append("Use the ambient row as the room and electronics noise floor for later threshold tuning.")
+    lines.append("Rows with high `mic_level_saturation_pct` are too loud for frequency response calibration and should be repeated at lower volume or farther from the speaker.")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

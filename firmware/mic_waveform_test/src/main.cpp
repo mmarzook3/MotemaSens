@@ -629,6 +629,15 @@ static void startUsbLiveLog(uint32_t now)
   usbLogSamples = 0;
   usbLogBeats = 0;
   rejectedBeatCandidates = 0;
+  beatEnvelope = 0.0f;
+  beatFloor = 0.0f;
+  beatThreshold = 0.18f;
+  beatPeak = 0.0f;
+  acquisitionBpm = 0.0f;
+  bpm = 0.0f;
+  lastBeatMs = 0;
+  beatArmed = true;
+  beatCandidateActive = false;
 
   Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
                 DEVICE_VERSION,

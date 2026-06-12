@@ -93,6 +93,7 @@ python tools\run_frequency_calibration.py --port COM14 --frequencies 60,80,100,1
 ```
 
 The tool stores raw logs and writes a calibration CSV and Markdown report under `test_logs\frequency_calibration`.
+Each capture resets the detector BPM, envelope, threshold and beat timing state so rows do not carry state from the previous capture.
 
 ## Heart-sound filtering
 
