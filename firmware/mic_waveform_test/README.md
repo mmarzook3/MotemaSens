@@ -59,7 +59,7 @@ ADS1294 ECG from custom PCB:
 - `ECG_RESET` = GPIO34
 - `ECG_PWDN` = GPIO35
 
-The dev firmware holds the ECG pins in safe states, wakes/resets the ADS1294, reads the ID register, starts RDATAC mode and displays raw CH1 only when real DRDY frames arrive. The driver reads only while DRDY is low and uses a 10 ms minimum frame-period guard so the same conversion is not read repeatedly and ECG stays aligned to the 100 Hz USB log. If the ADS1294 is found but conversions are not arriving, serial prints `ECG_WAIT_DRDY` once per second with the DRDY pin level and sample counters.
+The dev firmware holds the ECG pins in safe states, wakes/resets the ADS1294, reads the ID register, starts conversions and displays raw CH1 using `RDATA` reads at the 100 Hz dev display/log cadence. It avoids depending on the narrow DRDY pulse for this screen test and restarts conversions if repeated zero frames are seen.
 
 Waveshare onboard QMI8658 accelerometer:
 
@@ -106,7 +106,7 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z and latest raw ECG CH1-CH4. ECG sequence and channel values advance only after ADS1294 DRDY frames are received.
+- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z and latest raw ECG CH1-CH4.
 - `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 

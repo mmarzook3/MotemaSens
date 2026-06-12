@@ -8,6 +8,7 @@ static constexpr uint8_t CMD_WAKEUP = 0x02;
 static constexpr uint8_t CMD_RESET = 0x06;
 static constexpr uint8_t CMD_START = 0x08;
 static constexpr uint8_t CMD_SDATAC = 0x11;
+static constexpr uint8_t CMD_RDATA = 0x12;
 static constexpr uint8_t CMD_RDATAC = 0x10;
 static constexpr uint8_t CMD_RREG = 0x20;
 static constexpr uint8_t CMD_WREG = 0x40;
@@ -20,8 +21,8 @@ static constexpr uint8_t REG_CH1SET = 0x05;
 static constexpr uint8_t REG_CH2SET = 0x06;
 static constexpr uint8_t REG_CH3SET = 0x07;
 static constexpr uint8_t REG_CH4SET = 0x08;
-static constexpr uint32_t ECG_NO_DRDY_REPORT_MS = 1000;
-static constexpr uint32_t ECG_MIN_FRAME_PERIOD_US = 10000;
+static constexpr uint32_t ECG_FRAME_PERIOD_US = 10000;
+static constexpr uint32_t ECG_RECOVERY_PERIOD_MS = 1000;
 
 static SPIClass ecgSpi(HSPI);
 static SPISettings ecgSettings(ECG_SPI_HZ, MSBFIRST, SPI_MODE1);
@@ -59,6 +60,20 @@ void EcgAds1294::writeRegister(uint8_t address, uint8_t value)
   digitalWrite(ECG_CS, HIGH);
   ecgSpi.endTransaction();
   delayMicroseconds(4);
+}
+
+void EcgAds1294::startContinuousRead()
+{
+  command(CMD_SDATAC);
+  delay(2);
+  digitalWrite(ECG_START, LOW);
+  delay(2);
+  digitalWrite(ECG_START, HIGH);
+  delay(2);
+  command(CMD_START);
+  delay(2);
+  lastFrameUs_ = micros();
+  zeroFrames_ = 0;
 }
 
 void EcgAds1294::begin()
@@ -118,11 +133,7 @@ void EcgAds1294::begin()
                 readRegister(REG_CH2SET),
                 readRegister(REG_CH3SET),
                 readRegister(REG_CH4SET));
-  digitalWrite(ECG_START, HIGH);
-  delay(2);
-  command(CMD_START);
-  delay(2);
-  command(CMD_RDATAC);
+  startContinuousRead();
   ready_ = true;
 #endif
 }
@@ -141,6 +152,8 @@ bool EcgAds1294::readDataFrame(EcgSample &sample)
   uint8_t data[3 + (ECG_CHANNELS * 3)] = {};
   ecgSpi.beginTransaction(ecgSettings);
   digitalWrite(ECG_CS, LOW);
+  ecgSpi.transfer(CMD_RDATA);
+  delayMicroseconds(8);
   for (uint8_t &byte : data) {
     byte = ecgSpi.transfer(0x00);
   }
@@ -153,6 +166,16 @@ bool EcgAds1294::readDataFrame(EcgSample &sample)
   for (size_t channel = 0; channel < ECG_CHANNELS; ++channel) {
     const size_t index = 3 + (channel * 3);
     sample.channels[channel] = readInt24(data[index], data[index + 1], data[index + 2]);
+  }
+  const bool allZero = sample.status == 0 &&
+                       sample.channels[0] == 0 &&
+                       sample.channels[1] == 0 &&
+                       sample.channels[2] == 0 &&
+                       sample.channels[3] == 0;
+  if (allZero) {
+    ++zeroFrames_;
+  } else {
+    zeroFrames_ = 0;
   }
   sample.valid = true;
   return true;
@@ -174,23 +197,8 @@ bool EcgAds1294::poll(EcgSample &sample)
     return false;
   }
 
-  if (drdyLevel() != LOW) {
-    const uint32_t now = millis();
-    if (now - lastNoDrdyReportMs_ >= ECG_NO_DRDY_REPORT_MS) {
-      lastNoDrdyReportMs_ = now;
-      if (samples_ == lastNoDrdyReportSamples_) {
-        Serial.printf("ECG_WAIT_DRDY,level=%d,samples=%lu,fail=%lu\n",
-                      drdyLevel(),
-                      (unsigned long)samples_,
-                      (unsigned long)failures_);
-      }
-      lastNoDrdyReportSamples_ = samples_;
-    }
-    return false;
-  }
-
   const uint32_t nowUs = micros();
-  if (nowUs - lastFrameUs_ < ECG_MIN_FRAME_PERIOD_US) {
+  if (nowUs - lastFrameUs_ < ECG_FRAME_PERIOD_US) {
     return false;
   }
 
@@ -198,6 +206,12 @@ bool EcgAds1294::poll(EcgSample &sample)
   if (ok) {
     lastFrameUs_ = nowUs;
     ++samples_;
+    if (zeroFrames_ >= 5) {
+      Serial.printf("ECG_RECOVER,reason=zero_frame,samples=%lu\n",
+                    (unsigned long)samples_);
+      startContinuousRead();
+      return false;
+    }
   } else {
     ++failures_;
   }

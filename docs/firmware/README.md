@@ -45,7 +45,7 @@ The current queues are:
 | `displayPointQueue` | `acquisitionTask` | `outputTask` | Signed waveform point for the LCD trace |
 | `beatEventQueue` | `acquisitionTask` | `outputTask` | Beat interval, BPM estimate, signal level and gain |
 | `accelSampleQueue` | `acquisitionTask` | `outputTask` | QMI8658 X/Y/Z acceleration in g |
-| `ecgSampleQueue` | `acquisitionTask` | `outputTask` | ADS1294 DRDY-timed status plus raw CH1-CH4 signed 24-bit samples |
+| `ecgSampleQueue` | `acquisitionTask` | `outputTask` | ADS1294 status plus raw CH1-CH4 signed 24-bit samples at the current 100 Hz dev cadence |
 
 If a queue is full, the oldest queued item is dropped before pushing the newest item. This keeps the newest live data visible and stops the acquisition task from blocking.
 
@@ -58,7 +58,7 @@ The current dev firmware keeps sensor code in separate modules under `firmware/m
 
 Each sensor can be disabled at build time with `ENABLE_MIC_SENSOR`, `ENABLE_ACCEL_SENSOR` or `ENABLE_ECG_SENSOR`.
 
-The ECG module must not invent samples on a software timer. ADS1294 samples are accepted only while `ECG_DRDY` is low, with a 10 ms minimum frame-period guard so the same conversion is not read repeatedly and the current dev log remains 100 Hz. If the ADS1294 ID/config registers are readable but DRDY does not arrive, the firmware reports `ECG_WAIT_DRDY` over serial so hardware clock/start/DRDY wiring can be checked before logging real ECG.
+The current ECG dev build uses ADS1294 `RDATA` reads every 10 ms so the LCD and USB log stay close to the 100 Hz dev cadence without depending on a narrow DRDY pulse. If repeated all-zero frames are read, the driver restarts conversions so the display does not remain frozen. The final logger should move ECG to an interrupt or DMA-style path before increasing the ECG sample rate.
 
 ## Future full product layout
 

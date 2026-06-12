@@ -26,6 +26,7 @@ private:
   void command(uint8_t value);
   uint8_t readRegister(uint8_t address);
   void writeRegister(uint8_t address, uint8_t value);
+  void startContinuousRead();
   bool readDataFrame(EcgSample &sample);
   int32_t readInt24(uint8_t b0, uint8_t b1, uint8_t b2) const;
 
@@ -35,6 +36,7 @@ private:
   uint32_t samples_ = 0;
   uint32_t failures_ = 0;
   uint32_t lastFrameUs_ = 0;
-  uint32_t lastNoDrdyReportMs_ = 0;
-  uint32_t lastNoDrdyReportSamples_ = 0;
+  uint32_t lastRecoveryMs_ = 0;
+  uint32_t lastRecoverySamples_ = 0;
+  uint8_t zeroFrames_ = 0;
 };
