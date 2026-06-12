@@ -41,6 +41,8 @@ static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
+static constexpr uint16_t WIFI_LOG_PORT = 80;
+static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
@@ -81,6 +83,7 @@ static constexpr uint16_t COLOR_WIFI = 0x07E0;
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, GFX_NOT_DEFINED, SPI2_HOST);
 Arduino_GFX *display = new Arduino_GC9A01(bus, LCD_RST, 0, true);
 Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, SCREEN_H, display);
+WiFiServer wifiLogServer(WIFI_LOG_PORT);
 
 static float wave[SCREEN_W];
 static float ecgWave[SCREEN_W];
@@ -139,6 +142,14 @@ static uint32_t usbLogStartMs = 0;
 static uint32_t usbLogLastSampleMs = 0;
 static uint32_t usbLogSamples = 0;
 static uint32_t usbLogBeats = 0;
+static bool wifiLogServerStarted = false;
+static bool wifiLogActive = false;
+static bool wifiStreamHeaderSent = false;
+static uint32_t wifiLogStartMs = 0;
+static uint32_t wifiLogLastSampleMs = 0;
+static uint32_t wifiLogSamples = 0;
+static uint32_t wifiLogBeats = 0;
+static WiFiClient wifiStreamClient;
 static Preferences preferences;
 static MicSensor micSensor;
 static AccelSensor accelSensor;
@@ -465,6 +476,41 @@ static String jsonValue(const String &json, const String &key)
   return json.substring(firstQuote + 1, secondQuote);
 }
 
+static const char *logHeader()
+{
+  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4";
+}
+
+static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
+{
+  return snprintf(buffer, length,
+                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld\n",
+                  (unsigned long)elapsedMs,
+                  latestMicPoint,
+                  smoothedLevel,
+                  beatEnvelope,
+                  beatThreshold,
+                  motionLevel,
+                  bpm,
+                  latestAccelX,
+                  latestAccelY,
+                  latestAccelZ,
+                  latestAccelRawX,
+                  latestAccelRawY,
+                  latestAccelRawZ,
+                  (unsigned long)latestEcgSequence,
+                  (unsigned long)latestEcgStatus,
+                  (long)latestEcgCh1,
+                  (long)latestEcgCh2,
+                  (long)latestEcgCh3,
+                  (long)latestEcgCh4);
+}
+
+static void updateLoggingLed()
+{
+  digitalWrite(LED_BLUE, (usbLogActive || wifiLogActive) ? HIGH : LOW);
+}
+
 static void saveLocalWifiCredentials()
 {
   if (strlen(LOCAL_WIFI_SSID) == 0) {
@@ -511,6 +557,9 @@ static void connectWifi()
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("wifi connected, ip=");
     Serial.println(WiFi.localIP());
+    wifiLogServer.begin();
+    wifiLogServerStarted = true;
+    Serial.printf("wifi logger ready: http://%s/\n", WiFi.localIP().toString().c_str());
   } else {
     Serial.println("wifi connect failed");
   }
@@ -623,7 +672,7 @@ static void checkForOtaUpdate()
 static void startUsbLiveLog(uint32_t now)
 {
   usbLogActive = true;
-  digitalWrite(LED_BLUE, HIGH);
+  updateLoggingLed();
   usbLogStartMs = now;
   usbLogLastSampleMs = now;
   usbLogSamples = 0;
@@ -649,7 +698,7 @@ static void startUsbLiveLog(uint32_t now)
                 DEVICE_VERSION,
                 (unsigned long)USB_LOG_DURATION_MS,
                 (unsigned long)USB_LOG_PERIOD_MS);
-  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4");
+  Serial.println(logHeader());
 }
 
 static void stopUsbLiveLog(uint32_t now, const char *reason)
@@ -662,7 +711,7 @@ static void stopUsbLiveLog(uint32_t now, const char *reason)
                 (unsigned long)rejectedBeatCandidates,
                 bpm);
   usbLogActive = false;
-  digitalWrite(LED_BLUE, LOW);
+  updateLoggingLed();
 }
 
 static void handleUsbLogCommands(uint32_t now)
@@ -698,26 +747,232 @@ static void updateUsbLiveLog(uint32_t now)
   }
   ++usbLogSamples;
 
-  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld\n",
-                (unsigned long)elapsedMs,
-                latestMicPoint,
-                smoothedLevel,
-                beatEnvelope,
-                beatThreshold,
-                motionLevel,
-                bpm,
-                latestAccelX,
-                latestAccelY,
-                latestAccelZ,
-                latestAccelRawX,
-                latestAccelRawY,
-                latestAccelRawZ,
-                (unsigned long)latestEcgSequence,
-                (unsigned long)latestEcgStatus,
-                (long)latestEcgCh1,
-                (long)latestEcgCh2,
-                (long)latestEcgCh3,
-                (long)latestEcgCh4);
+  char row[256] = {};
+  formatLogRow(row, sizeof(row), elapsedMs);
+  Serial.print(row);
+}
+
+static void startWifiLog(uint32_t now)
+{
+  wifiLogActive = true;
+  wifiLogStartMs = now;
+  wifiLogLastSampleMs = now;
+  wifiLogSamples = 0;
+  wifiLogBeats = 0;
+  wifiStreamHeaderSent = false;
+  updateLoggingLed();
+}
+
+static void stopWifiLog()
+{
+  wifiLogActive = false;
+  wifiStreamHeaderSent = false;
+  if (wifiStreamClient) {
+    wifiStreamClient.stop();
+  }
+  updateLoggingLed();
+}
+
+static void sendHttpResponse(WiFiClient &client, const char *contentType, const String &body)
+{
+  client.println("HTTP/1.1 200 OK");
+  client.println("Connection: close");
+  client.print("Content-Type: ");
+  client.println(contentType);
+  client.print("Content-Length: ");
+  client.println(body.length());
+  client.println("Access-Control-Allow-Origin: *");
+  client.println();
+  client.print(body);
+}
+
+static String wifiStatusJson()
+{
+  String json = "{";
+  json += "\"version\":\"";
+  json += DEVICE_VERSION;
+  json += "\",\"wifi_connected\":";
+  json += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
+  json += ",\"ip\":\"";
+  json += (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "";
+  json += "\",\"wifi_logging\":";
+  json += wifiLogActive ? "true" : "false";
+  json += ",\"usb_logging\":";
+  json += usbLogActive ? "true" : "false";
+  json += ",\"wifi_samples\":";
+  json += String(wifiLogSamples);
+  json += ",\"wifi_beats\":";
+  json += String(wifiLogBeats);
+  json += ",\"wifi_elapsed_ms\":";
+  json += String(wifiLogActive ? (millis() - wifiLogStartMs) : 0);
+  json += ",\"wifi_rate_hz\":";
+  if (wifiLogActive && millis() != wifiLogStartMs) {
+    json += String((float)wifiLogSamples * 1000.0f / (float)(millis() - wifiLogStartMs), 1);
+  } else {
+    json += "0.0";
+  }
+  json += ",\"ecg_seq\":";
+  json += String(latestEcgSequence);
+  json += ",\"ecg_ready\":";
+  json += ecgSensor.ready() ? "true" : "false";
+  json += ",\"mic_level\":";
+  json += String(smoothedLevel, 4);
+  json += ",\"acc_x\":";
+  json += String(latestAccelX, 4);
+  json += ",\"acc_y\":";
+  json += String(latestAccelY, 4);
+  json += ",\"acc_z\":";
+  json += String(latestAccelZ, 4);
+  json += "}";
+  return json;
+}
+
+static String controlPageHtml()
+{
+  String html;
+  html.reserve(1600);
+  html += "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<title>MotemaSens Dev Logger</title></head><body>";
+  html += "<h2>MotemaSens Dev Logger</h2>";
+  html += "<p>Device IP: ";
+  html += WiFi.localIP().toString();
+  html += "</p>";
+  html += "<p><button onclick=\"fetch('/api/start').then(refresh)\">Start WiFi Log</button> ";
+  html += "<button onclick=\"fetch('/api/stop').then(refresh)\">Stop WiFi Log</button> ";
+  html += "<a href='/stream'>Open CSV Stream</a></p>";
+  html += "<pre id='status'>loading...</pre>";
+  html += "<script>async function refresh(){let r=await fetch('/api/status');";
+  html += "document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);}";
+  html += "refresh();setInterval(refresh,1000);</script>";
+  html += "</body></html>";
+  return html;
+}
+
+static String readHttpRequestLine(WiFiClient &client)
+{
+  String requestLine;
+  const uint32_t start = millis();
+  while (client.connected() && millis() - start < 250) {
+    while (client.available()) {
+      const char c = (char)client.read();
+      if (c == '\r') {
+        continue;
+      }
+      if (c == '\n') {
+        return requestLine;
+      }
+      if (requestLine.length() < 160) {
+        requestLine += c;
+      }
+    }
+    delay(1);
+  }
+  return requestLine;
+}
+
+static void discardHttpHeaders(WiFiClient &client)
+{
+  uint8_t newlines = 0;
+  const uint32_t start = millis();
+  while (client.connected() && millis() - start < 250) {
+    while (client.available()) {
+      const char c = (char)client.read();
+      if (c == '\n') {
+        ++newlines;
+        if (newlines >= 2) {
+          return;
+        }
+      } else if (c != '\r') {
+        newlines = 0;
+      }
+    }
+    delay(1);
+  }
+}
+
+static void handleWifiHttpClient(uint32_t now)
+{
+  if (WiFi.status() != WL_CONNECTED || !wifiLogServerStarted) {
+    return;
+  }
+
+  if (wifiLogActive && wifiStreamClient && wifiStreamClient.connected()) {
+    return;
+  }
+
+  WiFiClient client = wifiLogServer.available();
+  if (!client) {
+    return;
+  }
+
+  const String requestLine = readHttpRequestLine(client);
+  discardHttpHeaders(client);
+
+  if (requestLine.indexOf("GET /stream") == 0) {
+    if (wifiStreamClient) {
+      wifiStreamClient.stop();
+    }
+    wifiStreamClient = client;
+    wifiStreamClient.println("HTTP/1.1 200 OK");
+    wifiStreamClient.println("Content-Type: text/csv");
+    wifiStreamClient.println("Cache-Control: no-cache");
+    wifiStreamClient.println("Connection: close");
+    wifiStreamClient.println("Access-Control-Allow-Origin: *");
+    wifiStreamClient.println();
+    wifiStreamClient.println(logHeader());
+    startWifiLog(now);
+    wifiStreamHeaderSent = true;
+    Serial.println("wifi stream client connected");
+    return;
+  }
+
+  if (requestLine.indexOf("GET /api/start") == 0 || requestLine.indexOf("GET /control?cmd=start") == 0) {
+    startWifiLog(now);
+    sendHttpResponse(client, "application/json", wifiStatusJson());
+  } else if (requestLine.indexOf("GET /api/stop") == 0 || requestLine.indexOf("GET /control?cmd=stop") == 0) {
+    stopWifiLog();
+    sendHttpResponse(client, "application/json", wifiStatusJson());
+  } else if (requestLine.indexOf("GET /api/status") == 0 || requestLine.indexOf("GET /status") == 0) {
+    sendHttpResponse(client, "application/json", wifiStatusJson());
+  } else {
+    sendHttpResponse(client, "text/html", controlPageHtml());
+  }
+  client.stop();
+}
+
+static void updateWifiLiveLog(uint32_t now)
+{
+  if (!wifiLogActive) {
+    return;
+  }
+
+  if (wifiStreamClient && !wifiStreamClient.connected()) {
+    stopWifiLog();
+    return;
+  }
+
+  if (now - wifiLogLastSampleMs < WIFI_LOG_PERIOD_MS) {
+    return;
+  }
+  wifiLogLastSampleMs += WIFI_LOG_PERIOD_MS;
+  if (now - wifiLogLastSampleMs > WIFI_LOG_PERIOD_MS) {
+    wifiLogLastSampleMs = now;
+  }
+  ++wifiLogSamples;
+
+  if (!wifiStreamClient || !wifiStreamClient.connected()) {
+    return;
+  }
+
+  if (!wifiStreamHeaderSent) {
+    wifiStreamClient.println(logHeader());
+    wifiStreamHeaderSent = true;
+  }
+
+  char row[256] = {};
+  const uint32_t elapsedMs = now - wifiLogStartMs;
+  formatLogRow(row, sizeof(row), elapsedMs);
+  wifiStreamClient.print(row);
 }
 
 static void drawWaveform()
@@ -1052,6 +1307,9 @@ static void drainAcquisitionQueues()
                     event.gain,
                     (unsigned long)outputDelayMs);
     }
+    if (wifiLogActive) {
+      ++wifiLogBeats;
+    }
   }
 
   AccelSample sample = {};
@@ -1082,6 +1340,7 @@ static void outputTask(void *)
     const uint32_t now = millis();
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
+    handleWifiHttpClient(now);
 
     if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
       otaCheckedOnce = true;
@@ -1091,13 +1350,14 @@ static void outputTask(void *)
 
     drainAcquisitionQueues();
     updateUsbLiveLog(now);
+    updateWifiLiveLog(now);
 
-    if (!usbLogActive && now - lastDrawMs >= 24) {
+    if (!usbLogActive && !wifiLogActive && now - lastDrawMs >= 24) {
       lastDrawMs = now;
       drawCombinedGraph();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(usbLogActive ? 1 : 2));
+    vTaskDelay(pdMS_TO_TICKS((usbLogActive || wifiLogActive) ? 1 : 2));
   }
 }
 

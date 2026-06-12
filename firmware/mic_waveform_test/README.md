@@ -7,6 +7,7 @@ The round LCD currently shows raw ECG CH1 on the upper graph, mic on the middle 
 
 It also connects to WiFi. Dev builds are flashed directly over USB and do not run OTA while `DEVICE_VERSION` is `local-dev`.
 OTA is only for major tagged releases or manually triggered release builds.
+When WiFi is connected, dev builds expose a local HTTP logger and control page at the device IP.
 
 ## Architecture
 
@@ -111,6 +112,41 @@ The firmware prints:
 - `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z and latest raw ECG CH1-CH4.
 - `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
+
+## WiFi live logging and control
+
+The dev firmware exposes local device-IP logging on port `80`.
+
+Serial prints the URL after WiFi connects:
+
+```text
+wifi logger ready: http://192.168.5.29/
+```
+
+Endpoints:
+
+- `/` - simple browser control/status page.
+- `/api/status` - JSON status with firmware version, IP, logging state, ECG sequence and latest sensor values.
+- `/api/start` - starts WiFi logging state and turns on the blue LED.
+- `/api/stop` - stops WiFi logging and closes the active stream.
+- `/stream` - starts WiFi logging and streams the same CSV rows as USB live logging.
+- `/control?cmd=start` and `/control?cmd=stop` - simple control aliases.
+
+Example PC capture:
+
+```powershell
+curl.exe http://192.168.5.29/stream --output test_logs\wifi_captures\2026-06-12\wifi_log.csv
+```
+
+Stop the stream with:
+
+```powershell
+curl.exe http://192.168.5.29/api/stop
+```
+
+The blue LED stays on while USB or WiFi logging is active.
+
+The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
 
 ## Frequency calibration
 

@@ -36,7 +36,7 @@ The current `firmware/mic_waveform_test` firmware implements the pattern with pi
 | Task | Core | Priority | Current purpose |
 | --- | --- | --- | --- |
 | `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads ADS1294 ECG, I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
-| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD ECG/mic/accelerometer graph, handles USB logging and WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
+| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD ECG/mic/accelerometer graph, handles USB logging, direct-IP WiFi logging/control, WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
 
 The current queues are:
 
@@ -81,7 +81,8 @@ The acquisition task should use short, deterministic code paths. It should not p
 
 - SD card file creation and writes.
 - USB streaming and command handling.
-- WiFi streaming/upload.
+- Direct-IP WiFi logging and local browser/API control during dev.
+- WiFi streaming/upload to server later when remote sessions need it.
 - BLE mobile app control.
 - LCD rendering.
 - LED status.
@@ -106,6 +107,29 @@ Use BLE for:
 - Time sync from phone.
 
 Use SD, USB or WiFi for high-rate ECG/mic data.
+
+## WiFi logging and control
+
+Dev firmware exposes a local HTTP server on the board IP after WiFi connects. This is the first WiFi logging path while SD card hardware is not ready.
+
+Endpoints:
+
+- `/` opens a small control/status page.
+- `/api/status` returns JSON with firmware version, logging state, sample count, sample rate, ECG sequence, mic and accelerometer values.
+- `/api/start` starts WiFi logging state and turns on GPIO15 blue LED.
+- `/api/stop` stops WiFi logging and turns off GPIO15 blue LED if USB logging is also stopped.
+- `/stream` starts WiFi logging and streams the same CSV schema as USB live logging.
+- `/control?cmd=start` and `/control?cmd=stop` are simple command aliases.
+
+PC capture helper:
+
+```powershell
+python tools\wifi_log_capture.py --host 192.168.5.29 --duration 10 --out test_logs\wifi_captures\2026-06-12\wifi_capture.csv
+```
+
+Direct-IP logging is best for bench testing because the PC can capture raw CSV without needing a cloud service or database. Later product firmware can add a server-backed upload path for remote patient sessions.
+
+During high-rate USB or WiFi logging the LCD graph refresh pauses. The output task gives priority to the CSV stream so the dev cadence stays close to 100 Hz.
 
 ## Buffering rule
 
