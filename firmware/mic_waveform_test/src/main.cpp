@@ -132,6 +132,7 @@ static uint32_t beatCandidateStartMs = 0;
 static uint32_t beatCandidatePeakMs = 0;
 static float beatCandidatePeakLevel = 0.0f;
 static float beatCandidatePeakGain = 0.0f;
+static uint32_t rejectedBeatCandidates = 0;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastLedToggleMs = 0;
 static bool ledGreenOn = false;
@@ -367,6 +368,12 @@ static void sendBeatEvent(const BeatEvent &event)
   }
 }
 
+static void discardBeatCandidate()
+{
+  beatCandidateActive = false;
+  ++rejectedBeatCandidates;
+}
+
 static void confirmBeatCandidate()
 {
   if (!beatCandidateActive) {
@@ -379,16 +386,21 @@ static void confirmBeatCandidate()
   beatCandidateActive = false;
   beatArmed = false;
 
-  if (lastBeatMs > 0) {
-    const uint32_t intervalMs = beatMs - lastBeatMs;
-    if (intervalMs >= HEART_REFRACTORY_MS && intervalMs <= 1800) {
-      const float instantBpm = 60000.0f / (float)intervalMs;
-      acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
-      BeatEvent event = {beatMs, intervalMs, acquisitionBpm, beatLevel, beatGain};
-      sendBeatEvent(event);
-    }
+  if (lastBeatMs == 0) {
+    lastBeatMs = beatMs;
+    return;
   }
 
+  const uint32_t intervalMs = beatMs - lastBeatMs;
+  if (intervalMs < HEART_REFRACTORY_MS || intervalMs > 1800) {
+    ++rejectedBeatCandidates;
+    return;
+  }
+
+  const float instantBpm = 60000.0f / (float)intervalMs;
+  acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
+  BeatEvent event = {beatMs, intervalMs, acquisitionBpm, beatLevel, beatGain};
+  sendBeatEvent(event);
   lastBeatMs = beatMs;
 }
 
@@ -607,6 +619,7 @@ static void startUsbLiveLog(uint32_t now)
   usbLogLastSampleMs = now;
   usbLogSamples = 0;
   usbLogBeats = 0;
+  rejectedBeatCandidates = 0;
 
   Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
                 DEVICE_VERSION,
@@ -617,11 +630,12 @@ static void startUsbLiveLog(uint32_t now)
 
 static void stopUsbLiveLog(uint32_t now, const char *reason)
 {
-  Serial.printf("LIVE_TEST_END,reason=%s,elapsed_ms=%lu,samples=%lu,beats=%lu,bpm=%.1f\n",
+  Serial.printf("LIVE_TEST_END,reason=%s,elapsed_ms=%lu,samples=%lu,beats=%lu,rejected=%lu,bpm=%.1f\n",
                 reason,
                 (unsigned long)(now - usbLogStartMs),
                 (unsigned long)usbLogSamples,
                 (unsigned long)usbLogBeats,
+                (unsigned long)rejectedBeatCandidates,
                 bpm);
   usbLogActive = false;
 }
@@ -835,7 +849,9 @@ static void updateBeatDetector(float energy)
 
     const bool peakHasSettled = beatEnvelope < beatCandidatePeakLevel * 0.78f;
     const bool peakWindowExpired = now - beatCandidateStartMs >= HEART_PEAK_HOLD_MS;
-    if (!motionQuiet || peakHasSettled || peakWindowExpired) {
+    if (!motionQuiet) {
+      discardBeatCandidate();
+    } else if (peakHasSettled || peakWindowExpired) {
       confirmBeatCandidate();
     }
   }
