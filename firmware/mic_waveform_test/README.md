@@ -150,6 +150,12 @@ Convert a downloaded `stream.csv` file into an interactive browser plot:
 python tools\csv_log_to_html.py C:\Users\mmarz\Downloads\stream.csv -o test_logs\wifi_captures\2026-06-12\stream_plot.html
 ```
 
+Or use the Windows helper from the repo root. It asks for the CSV file path and opens the HTML plot when done:
+
+```powershell
+.\convert_stream_csv_to_html.bat
+```
+
 The blue LED stays on while USB or WiFi logging is active.
 
 The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
