@@ -1,12 +1,10 @@
 name: mic waveform firmware release
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - "firmware/mic_waveform_test/**"
-      - ".github/workflows/mic-waveform-release.yml"
+    tags:
+      - "v*.*.0-*"
 
 permissions:
   contents: write
