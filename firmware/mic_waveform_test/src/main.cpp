@@ -571,7 +571,7 @@ static void startUsbLiveLog(uint32_t now)
 {
   usbLogActive = true;
   usbLogStartMs = now;
-  usbLogLastSampleMs = 0;
+  usbLogLastSampleMs = now;
   usbLogSamples = 0;
   usbLogBeats = 0;
 
@@ -611,19 +611,23 @@ static void updateUsbLiveLog(uint32_t now)
     return;
   }
 
-  if (now - usbLogStartMs >= USB_LOG_DURATION_MS) {
+  const uint32_t elapsedMs = now - usbLogStartMs;
+  if (elapsedMs >= USB_LOG_DURATION_MS) {
     stopUsbLiveLog(now, "complete");
     return;
   }
 
-  if (usbLogLastSampleMs != 0 && now - usbLogLastSampleMs < USB_LOG_PERIOD_MS) {
+  if (now - usbLogLastSampleMs < USB_LOG_PERIOD_MS) {
     return;
   }
-  usbLogLastSampleMs = now;
+  usbLogLastSampleMs += USB_LOG_PERIOD_MS;
+  if (now - usbLogLastSampleMs > USB_LOG_PERIOD_MS) {
+    usbLogLastSampleMs = now;
+  }
   ++usbLogSamples;
 
   Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d\n",
-                (unsigned long)(now - usbLogStartMs),
+                (unsigned long)elapsedMs,
                 latestMicPoint,
                 smoothedLevel,
                 beatEnvelope,
@@ -1139,12 +1143,12 @@ static void outputTask(void *)
     drainAcquisitionQueues();
     updateUsbLiveLog(now);
 
-    if (now - lastDrawMs >= 24) {
+    if (!usbLogActive && now - lastDrawMs >= 24) {
       lastDrawMs = now;
       drawCombinedGraph();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(pdMS_TO_TICKS(usbLogActive ? 1 : 2));
   }
 }
 

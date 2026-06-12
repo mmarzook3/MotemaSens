@@ -66,6 +66,7 @@ If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.
 ## USB live heart-sound test
 
 The dev firmware can stream a 60 second live test over USB serial.
+During the live USB test the LCD graph is paused so serial logging keeps a stable 10 ms / 100 Hz timing.
 
 1. Flash the dev build directly over USB.
 2. Open the serial monitor at `115200`.
@@ -77,7 +78,7 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms with mic trace, mic level, beat envelope, beat threshold, motion level, BPM and accelerometer X/Y/Z.
+- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM and accelerometer X/Y/Z.
 - `BEAT` rows when the heart-sound detector finds a beat.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent.
 
