@@ -144,6 +144,12 @@ Stop the stream with:
 curl.exe http://192.168.5.29/api/stop
 ```
 
+Convert a downloaded `stream.csv` file into an interactive browser plot:
+
+```powershell
+python tools\csv_log_to_html.py C:\Users\mmarz\Downloads\stream.csv -o test_logs\wifi_captures\2026-06-12\stream_plot.html
+```
+
 The blue LED stays on while USB or WiFi logging is active.
 
 The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
