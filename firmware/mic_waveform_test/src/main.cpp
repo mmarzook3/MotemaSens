@@ -130,7 +130,10 @@ static int32_t latestEcgCh4 = 0;
 static uint32_t latestEcgStatus = 0;
 static uint32_t latestEcgSequence = 0;
 static float ecgBaseline = 0.0f;
+static float ecgDisplayFiltered = 0.0f;
+static float ecgDisplayNoise = 5000.0f;
 static float ecgScale = 80000.0f;
+static bool ecgDisplayReady = false;
 static bool usbLogActive = false;
 static uint32_t usbLogStartMs = 0;
 static uint32_t usbLogLastSampleMs = 0;
@@ -637,7 +640,10 @@ static void startUsbLiveLog(uint32_t now)
   beatCandidateActive = false;
   micSensor.resetDetectorState();
   ecgBaseline = 0.0f;
-  ecgScale = 80000.0f;
+  ecgDisplayFiltered = 0.0f;
+  ecgDisplayNoise = 900.0f;
+  ecgScale = 3500.0f;
+  ecgDisplayReady = false;
 
   Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
                 DEVICE_VERSION,
@@ -828,7 +834,7 @@ static void drawCombinedGraph()
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
   gfx->setCursor(45, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
-  gfx->print("ECG CH1 RAW");
+  gfx->print("ECG CH1-CH2");
   gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
   gfx->print("MIC");
   gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
@@ -864,14 +870,30 @@ static void pushEcgSample(const EcgSample &sample)
   latestEcgCh3 = sample.channels[2];
   latestEcgCh4 = sample.channels[3];
 
-  const float raw = (float)sample.channels[0];
-  ecgBaseline += 0.002f * (raw - ecgBaseline);
+  const float raw = (float)(sample.channels[0] - sample.channels[1]);
+  if (!ecgDisplayReady) {
+    ecgBaseline = raw;
+    ecgDisplayFiltered = 0.0f;
+    ecgScale = 3500.0f;
+    for (float &point : ecgWave) {
+      point = 0.0f;
+    }
+    ecgDisplayReady = true;
+  }
+
+  ecgBaseline += 0.010f * (raw - ecgBaseline);
   const float centered = raw - ecgBaseline;
-  ecgScale = max(50000.0f, ecgScale * 0.995f);
-  ecgScale = max(ecgScale, fabsf(centered) * 1.15f);
+  const float displayJump = centered - ecgDisplayFiltered;
+  ecgDisplayNoise = (ecgDisplayNoise * 0.992f) + (fabsf(displayJump) * 0.008f);
+  const float maxStep = max(450.0f, ecgDisplayNoise * 1.15f);
+  const float limitedCentered = ecgDisplayFiltered + constrain(displayJump, -maxStep, maxStep);
+  ecgDisplayFiltered += 0.16f * (limitedCentered - ecgDisplayFiltered);
+
+  ecgScale = max(1200.0f, ecgScale * 0.997f);
+  ecgScale = max(ecgScale, fabsf(ecgDisplayFiltered) * 2.4f);
 
   memmove(&ecgWave[0], &ecgWave[1], sizeof(ecgWave) - sizeof(ecgWave[0]));
-  ecgWave[SCREEN_W - 1] = constrain(centered / ecgScale, -1.0f, 1.0f);
+  ecgWave[SCREEN_W - 1] = constrain(ecgDisplayFiltered / ecgScale, -0.95f, 0.95f);
 }
 
 static void sendEcgSample(const EcgSample &sample)

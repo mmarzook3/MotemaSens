@@ -61,6 +61,7 @@ ADS1294 ECG from custom PCB:
 - `ECG_PWDN` = GPIO35
 
 The dev firmware holds the ECG pins in safe states, wakes/resets the ADS1294, reads the ID register, starts conversions and displays raw CH1 using `RDATA` reads at the 100 Hz dev display/log cadence. It avoids depending on the narrow DRDY pulse for this screen test and restarts conversions if repeated zero frames are seen.
+The USB log keeps raw ECG CH1-CH4 values, while the LCD ECG trace uses display-only CH1-CH2 differential cancellation, baseline removal, spike limiting, smoothing and adaptive scaling so common-mode noise does not dominate the round screen.
 
 Waveshare onboard QMI8658 accelerometer:
 
