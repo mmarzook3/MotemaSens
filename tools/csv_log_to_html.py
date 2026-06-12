@@ -148,9 +148,12 @@ header { position:sticky; top:0; z-index:3; padding:14px 18px; background:#0b0f1
 h1 { margin:0 0 10px; font-size:20px; }
 .summary { display:flex; flex-wrap:wrap; gap:8px; font-size:13px; color:var(--muted); }
 .pill { border:1px solid var(--line); border-radius:999px; padding:4px 9px; background:#0f1620; }
-.toolbar { display:flex; flex-wrap:wrap; gap:8px; padding:12px 18px 0; }
+.toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:12px 18px 0; }
 button { border:0; border-radius:6px; padding:7px 11px; background:#238636; color:white; cursor:pointer; }
 button.secondary { background:#30363d; }
+.file-button { display:inline-flex; align-items:center; border-radius:6px; padding:7px 11px; background:#1f6feb; color:white; cursor:pointer; font-size:13px; }
+.file-button input { display:none; }
+.file-status { color:var(--muted); font-size:13px; }
 main { padding:12px 18px 24px; display:grid; gap:12px; }
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
@@ -172,16 +175,19 @@ canvas { width:100%; height:210px; display:block; background:#05080c; border:1px
   <div id="summary" class="summary"></div>
 </header>
 <div class="toolbar">
+  <label class="file-button">Browse CSV<input id="csvFile" type="file" accept=".csv,text/csv"></label>
   <button id="resetZoom">Reset zoom</button>
   <button id="showRaw" class="secondary">Show raw ECG</button>
+  <span id="fileStatus" class="file-status">Embedded sample loaded</span>
 </div>
 <main id="panels"></main>
 <script>
-const DATA = __PAYLOAD__;
-const rows = DATA.rows;
+const DEFAULT_DATA = __PAYLOAD__;
+let DATA = DEFAULT_DATA;
+let rows = DATA.rows;
 const colors = ["#58a6ff","#f78166","#7ee787","#d2a8ff","#f2cc60","#79c0ff"];
-const fullStart = rows[0].ms;
-const fullEnd = rows[rows.length - 1].ms;
+let fullStart = rows[0].ms;
+let fullEnd = rows[rows.length - 1].ms;
 let viewStart = fullStart;
 let viewEnd = fullEnd;
 let drag = null;
@@ -196,6 +202,106 @@ function fmt(value) {
 function updateSummary() {
   document.getElementById("summary").innerHTML = Object.entries(DATA.summary)
     .map(([key, value]) => `<span class="pill">${key}: ${value}</span>`).join("");
+}
+
+function parseValue(value) {
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return null;
+  if (/^0x/i.test(trimmed)) {
+    const parsedHex = Number.parseInt(trimmed, 16);
+    if (Number.isFinite(parsedHex)) return parsedHex;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : trimmed;
+}
+
+function parseCsvLine(line) {
+  const out = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' && quoted && line[i + 1] === '"') {
+      value += '"';
+      i++;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      out.push(value);
+      value = "";
+    } else {
+      value += char;
+    }
+  }
+  out.push(value);
+  return out;
+}
+
+function addDerivedChannels(nextRows) {
+  nextRows.forEach(row => {
+    if (typeof row.ecg_ch1 === "number" && typeof row.ecg_ch2 === "number") {
+      row.ecg_diff_ch1_ch2 = row.ecg_ch1 - row.ecg_ch2;
+    }
+  });
+}
+
+function buildSummary(source, nextRows) {
+  const msValues = nextRows.map(row => row.ms).filter(value => typeof value === "number");
+  const ecgSeqValues = nextRows.map(row => row.ecg_seq).filter(value => typeof value === "number");
+  const deltas = [];
+  for (let i = 1; i < msValues.length; i++) deltas.push(msValues[i] - msValues[i - 1]);
+  const durationMs = msValues.length > 1 ? msValues[msValues.length - 1] - msValues[0] : 0;
+  const summary = {
+    source,
+    rows: nextRows.length,
+    duration_s: Number((durationMs / 1000).toFixed(2)),
+    rate_hz: durationMs ? Number((msValues.length * 1000 / durationMs).toFixed(2)) : 0,
+  };
+  if (deltas.length) {
+    summary.dt_avg_ms = Number((deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(2));
+    summary.dt_max_ms = Math.max(...deltas);
+  }
+  if (ecgSeqValues.length > 1) {
+    summary.ecg_seq_delta = ecgSeqValues[ecgSeqValues.length - 1] - ecgSeqValues[0];
+  }
+  return summary;
+}
+
+function parseLogCsv(text, source) {
+  let header = null;
+  const nextRows = [];
+  text.split(/\r?\n/).forEach(line => {
+    if (!line.trim()) return;
+    const cells = parseCsvLine(line);
+    if (cells[0] === "LOG_HEADER") {
+      header = cells;
+      return;
+    }
+    if (cells[0] !== "LOG" || !header) return;
+    const row = {};
+    header.forEach((key, index) => { row[key] = parseValue(cells[index]); });
+    nextRows.push(row);
+  });
+  if (!header) throw new Error("No LOG_HEADER row found");
+  if (!nextRows.length) throw new Error("No LOG rows found");
+  addDerivedChannels(nextRows);
+  return {
+    summary: buildSummary(source, nextRows),
+    rows: nextRows,
+    panels: DATA.panels,
+  };
+}
+
+function setDataset(nextData, statusText) {
+  DATA = nextData;
+  rows = DATA.rows;
+  fullStart = rows[0].ms;
+  fullEnd = rows[rows.length - 1].ms;
+  viewStart = fullStart;
+  viewEnd = fullEnd;
+  updateSummary();
+  document.getElementById("fileStatus").textContent = statusText;
+  drawAll();
 }
 
 function availableChannels(panel) {
@@ -382,6 +488,16 @@ function attachMouse() {
 }
 
 document.getElementById("resetZoom").onclick = () => { viewStart = fullStart; viewEnd = fullEnd; drawAll(); };
+document.getElementById("csvFile").addEventListener("change", async event => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    setDataset(parseLogCsv(text, file.name), `Loaded ${file.name}`);
+  } catch (error) {
+    document.getElementById("fileStatus").textContent = `Could not load CSV: ${error.message}`;
+  }
+});
 document.getElementById("showRaw").onclick = () => {
   const raw = document.querySelector('[data-index="4"]');
   raw.classList.toggle("collapsed");

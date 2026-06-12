@@ -156,7 +156,7 @@ Or use the Windows helper from the repo root. It asks for the CSV file path and 
 .\convert_stream_csv_to_html.bat
 ```
 
-The generated viewer uses separate stacked panels for mic, ECG, accelerometer and BPM/motion. Raw ECG channels are hidden by default so the first view is readable instead of putting every signal on one cluttered graph.
+The generated viewer uses separate stacked panels for mic, ECG, accelerometer and BPM/motion. Raw ECG channels are hidden by default so the first view is readable instead of putting every signal on one cluttered graph. The viewer also has a `Browse CSV` button, so after opening one HTML plot you can load another downloaded CSV directly from the browser.
 
 The blue LED stays on while USB or WiFi logging is active.
 
