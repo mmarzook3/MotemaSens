@@ -14,7 +14,10 @@ def read_clean_log(path: Path) -> list[dict[str, float]]:
     rows: list[dict[str, float]] = []
     with path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
-            rows.append({key: float(value) for key, value in row.items()})
+            parsed = {key: float(value) for key, value in row.items()}
+            parsed.setdefault("beat_threshold", 0.0)
+            parsed.setdefault("motion_level", 0.0)
+            rows.append(parsed)
     return rows
 
 
@@ -105,6 +108,16 @@ def build_html(
         },
         {
             "type": "scatter",
+            "mode": "lines",
+            "name": "Beat threshold",
+            "x": t,
+            "y": column(log_rows, "beat_threshold"),
+            "xaxis": "x2",
+            "yaxis": "y2",
+            "line": {"color": "#f8961e", "width": 1.1, "dash": "dot"},
+        },
+        {
+            "type": "scatter",
             "mode": "markers",
             "name": "Detected beats",
             "x": beat_t,
@@ -157,6 +170,16 @@ def build_html(
             "xaxis": "x4",
             "yaxis": "y4",
             "line": {"color": "#9b5de5", "width": 1.2},
+        },
+        {
+            "type": "scatter",
+            "mode": "lines",
+            "name": "Motion gate level",
+            "x": t,
+            "y": column(log_rows, "motion_level"),
+            "xaxis": "x4",
+            "yaxis": "y4",
+            "line": {"color": "#f15bb5", "width": 1.0, "dash": "dot"},
         },
     ]
 

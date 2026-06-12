@@ -77,9 +77,19 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms with mic trace, mic level, beat envelope, BPM and accelerometer X/Y/Z.
+- `LOG` rows every 10 ms with mic trace, mic level, beat envelope, beat threshold, motion level, BPM and accelerometer X/Y/Z.
 - `BEAT` rows when the heart-sound detector finds a beat.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent.
+
+## Heart-sound filtering
+
+The dev firmware filters the mic into a body-sound band, tracks the heart envelope and uses the QMI8658 accelerometer as a motion gate.
+
+- Very small mic levels are treated as noise.
+- The beat threshold follows the local envelope and floor so room noise is less likely to trigger a beat.
+- Beat detection is ignored when accelerometer motion is above the quiet-body threshold.
+- The refractory time is set long enough to avoid counting the same S1/S2 beat pair twice.
+- The USB log includes `beat_threshold` and `motion_level` so live captures can be checked after each test.
 
 ## Development and release build rule
 

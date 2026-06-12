@@ -62,6 +62,9 @@ static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
+static constexpr bool USB_LOG_ACCEL_DEBUG = false;
+static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
+static constexpr float HEART_NOISE_GATE = 0.045f;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -111,9 +114,15 @@ static float displaySample = 0.0f;
 static float beatEnvelope = 0.0f;
 static float beatFloor = 0.0f;
 static float beatThreshold = 0.0f;
+static float beatPeak = 0.0f;
 static float autoGain = 10.0f;
 static float acquisitionBpm = 0.0f;
 static float bpm = 0.0f;
+static float motionLevel = 0.0f;
+static float lastAccelX = 0.0f;
+static float lastAccelY = 0.0f;
+static float lastAccelZ = 0.0f;
+static bool haveLastAccel = false;
 static uint32_t lastBeatMs = 0;
 static bool beatArmed = true;
 static uint32_t lastDrawMs = 0;
@@ -570,7 +579,7 @@ static void startUsbLiveLog(uint32_t now)
                 DEVICE_VERSION,
                 (unsigned long)USB_LOG_DURATION_MS,
                 (unsigned long)USB_LOG_PERIOD_MS);
-  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z");
+  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z");
 }
 
 static void stopUsbLiveLog(uint32_t now, const char *reason)
@@ -613,11 +622,13 @@ static void updateUsbLiveLog(uint32_t now)
   usbLogLastSampleMs = now;
   ++usbLogSamples;
 
-  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d\n",
+  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d\n",
                 (unsigned long)(now - usbLogStartMs),
                 latestMicPoint,
                 smoothedLevel,
                 beatEnvelope,
+                beatThreshold,
+                motionLevel,
                 bpm,
                 latestAccelX,
                 latestAccelY,
@@ -660,6 +671,16 @@ static void pushAccelSample(const AccelSample &sample)
   memmove(&accelZHistory[0], &accelZHistory[1], sizeof(accelZHistory) - sizeof(accelZHistory[0]));
 
   if (sample.valid) {
+    if (haveLastAccel) {
+      const float delta = fabsf(sample.x - lastAccelX) + fabsf(sample.y - lastAccelY) + fabsf(sample.z - lastAccelZ);
+      motionLevel = (motionLevel * 0.90f) + (delta * 0.10f);
+    } else {
+      haveLastAccel = true;
+    }
+    lastAccelX = sample.x;
+    lastAccelY = sample.y;
+    lastAccelZ = sample.z;
+
     latestAccelX = sample.x;
     latestAccelY = sample.y;
     latestAccelZ = sample.z;
@@ -752,18 +773,28 @@ static void pushWavePoint(float sample)
 static void updateBeatDetector(float energy)
 {
   const uint32_t now = millis();
-  beatEnvelope = (beatEnvelope * 0.90f) + (energy * 0.10f);
-  beatFloor = (beatFloor * 0.998f) + (beatEnvelope * 0.002f);
-  const float targetThreshold = max(0.30f, beatFloor + 0.20f);
-  beatThreshold = (beatThreshold * 0.94f) + (targetThreshold * 0.06f);
+  const bool motionQuiet = motionLevel < MOTION_GATE_THRESHOLD_G;
+  const float gatedEnergy = (energy < HEART_NOISE_GATE) ? 0.0f : energy;
 
-  const float resetLevel = max(0.18f, beatThreshold * 0.72f);
+  beatEnvelope = (beatEnvelope * 0.86f) + (gatedEnergy * 0.14f);
+  beatPeak = max(beatEnvelope, beatPeak * 0.985f);
+  beatFloor = (beatFloor * 0.997f) + (beatEnvelope * 0.003f);
+
+  const float dynamicMargin = max(0.14f, (beatPeak - beatFloor) * 0.46f);
+  const float targetThreshold = constrain(beatFloor + dynamicMargin, 0.26f, 0.62f);
+  beatThreshold = (beatThreshold * 0.90f) + (targetThreshold * 0.10f);
+
+  const float resetLevel = max(0.16f, beatThreshold * 0.62f);
   if (beatEnvelope < resetLevel) {
     beatArmed = true;
   }
 
-  const bool beatCandidate = beatArmed && beatEnvelope > beatThreshold && energy > beatThreshold;
-  if (!beatCandidate || now - lastBeatMs < 480) {
+  const bool beatCandidate = motionQuiet &&
+                             beatArmed &&
+                             beatEnvelope > beatThreshold &&
+                             gatedEnergy > beatThreshold &&
+                             beatEnvelope > beatFloor + 0.12f;
+  if (!beatCandidate || now - lastBeatMs < 620) {
     return;
   }
 
@@ -771,7 +802,7 @@ static void updateBeatDetector(float energy)
 
   if (lastBeatMs > 0) {
     const uint32_t intervalMs = now - lastBeatMs;
-    if (intervalMs >= 480 && intervalMs <= 2000) {
+    if (intervalMs >= 620 && intervalMs <= 1800) {
       const float instantBpm = 60000.0f / (float)intervalMs;
       acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
       BeatEvent event = {intervalMs, acquisitionBpm, beatEnvelope, autoGain};
@@ -916,7 +947,7 @@ static void readAccelSample()
     ++accelReadFailuresSinceDebug;
   }
 
-  if (usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
+  if (USB_LOG_ACCEL_DEBUG && usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
     const float magnitude = sqrtf((sample.x * sample.x) + (sample.y * sample.y) + (sample.z * sample.z));
     Serial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f,mag=%.2f\n",
                   (unsigned long)accelSamplesSinceDebug,
