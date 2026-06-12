@@ -445,6 +445,10 @@ static bool downloadAndApplyFirmware(const String &firmwareUrl)
 
 static void checkForOtaUpdate()
 {
+  if (strcmp(DEVICE_VERSION, "local-dev") == 0) {
+    return;
+  }
+
   if (strlen(OTA_MANIFEST_URL) == 0 || WiFi.status() != WL_CONNECTED) {
     return;
   }
