@@ -62,11 +62,11 @@ static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
-static constexpr uint32_t HEART_REFRACTORY_MS = 620;
+static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
-static constexpr float HEART_NOISE_GATE = 0.045f;
+static constexpr float HEART_NOISE_GATE = 0.025f;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -392,8 +392,15 @@ static void confirmBeatCandidate()
   }
 
   const uint32_t intervalMs = beatMs - lastBeatMs;
-  if (intervalMs < HEART_REFRACTORY_MS || intervalMs > 1800) {
+  if (intervalMs < HEART_REFRACTORY_MS) {
     ++rejectedBeatCandidates;
+    return;
+  }
+
+  if (intervalMs > 1800) {
+    ++rejectedBeatCandidates;
+    lastBeatMs = beatMs;
+    acquisitionBpm = 0.0f;
     return;
   }
 
@@ -831,8 +838,8 @@ static void updateBeatDetector(float energy)
   beatPeak = max(beatEnvelope, beatPeak * 0.985f);
   beatFloor = (beatFloor * 0.997f) + (beatEnvelope * 0.003f);
 
-  const float dynamicMargin = max(0.14f, (beatPeak - beatFloor) * 0.46f);
-  const float targetThreshold = constrain(beatFloor + dynamicMargin, 0.26f, 0.62f);
+  const float dynamicMargin = max(0.08f, (beatPeak - beatFloor) * 0.42f);
+  const float targetThreshold = constrain(beatFloor + dynamicMargin, 0.18f, 0.58f);
   beatThreshold = (beatThreshold * 0.90f) + (targetThreshold * 0.10f);
 
   const float resetLevel = max(0.16f, beatThreshold * 0.62f);
@@ -861,7 +868,7 @@ static void updateBeatDetector(float energy)
                              !beatCandidateActive &&
                              beatEnvelope > beatThreshold &&
                              gatedEnergy > beatThreshold &&
-                             beatEnvelope > beatFloor + 0.12f;
+                             beatEnvelope > beatFloor + 0.07f;
   if (!beatCandidate || now - lastBeatMs < HEART_REFRACTORY_MS) {
     return;
   }
