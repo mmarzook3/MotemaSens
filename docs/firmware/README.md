@@ -131,6 +131,8 @@ Direct-IP logging is best for bench testing because the PC can capture raw CSV w
 
 During high-rate USB or WiFi logging the LCD graph refresh pauses. The output task gives priority to the CSV stream so the dev cadence stays close to 100 Hz.
 
+Stop and status commands must remain available even while `/stream` is active. Do not block `/api/stop` behind the active stream, because browser downloads keep the stream connection open until the device closes it.
+
 ## Buffering rule
 
 All sensor data that must be saved should go through a queue or ring buffer.

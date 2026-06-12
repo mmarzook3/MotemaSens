@@ -148,6 +148,8 @@ The blue LED stays on while USB or WiFi logging is active.
 
 The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
 
+The stop and status endpoints remain available while `/stream` is active. The browser control page opens the CSV stream in a separate tab/download so the Stop WiFi Log button can still send `/api/stop`.
+
 ## Frequency calibration
 
 For mic/filter calibration, run ambient first and then generated PC tones:

@@ -838,8 +838,8 @@ static String controlPageHtml()
   html += WiFi.localIP().toString();
   html += "</p>";
   html += "<p><button onclick=\"fetch('/api/start').then(refresh)\">Start WiFi Log</button> ";
-  html += "<button onclick=\"fetch('/api/stop').then(refresh)\">Stop WiFi Log</button> ";
-  html += "<a href='/stream'>Open CSV Stream</a></p>";
+  html += "<button onclick=\"fetch('/api/stop',{cache:'no-store'}).then(refresh).catch(refresh)\">Stop WiFi Log</button> ";
+  html += "<a href='/stream' target='_blank' rel='noopener'>Open CSV Stream</a></p>";
   html += "<pre id='status'>loading...</pre>";
   html += "<script>async function refresh(){let r=await fetch('/api/status');";
   html += "document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);}";
@@ -848,11 +848,11 @@ static String controlPageHtml()
   return html;
 }
 
-static String readHttpRequestLine(WiFiClient &client)
+static String readHttpRequestLine(WiFiClient &client, uint32_t timeoutMs = 250)
 {
   String requestLine;
   const uint32_t start = millis();
-  while (client.connected() && millis() - start < 250) {
+  while (client.connected() && millis() - start < timeoutMs) {
     while (client.available()) {
       const char c = (char)client.read();
       if (c == '\r') {
@@ -870,11 +870,11 @@ static String readHttpRequestLine(WiFiClient &client)
   return requestLine;
 }
 
-static void discardHttpHeaders(WiFiClient &client)
+static void discardHttpHeaders(WiFiClient &client, uint32_t timeoutMs = 250)
 {
   uint8_t newlines = 0;
   const uint32_t start = millis();
-  while (client.connected() && millis() - start < 250) {
+  while (client.connected() && millis() - start < timeoutMs) {
     while (client.available()) {
       const char c = (char)client.read();
       if (c == '\n') {
@@ -896,17 +896,22 @@ static void handleWifiHttpClient(uint32_t now)
     return;
   }
 
-  if (wifiLogActive && wifiStreamClient && wifiStreamClient.connected()) {
-    return;
-  }
-
   WiFiClient client = wifiLogServer.available();
   if (!client) {
     return;
   }
 
-  const String requestLine = readHttpRequestLine(client);
-  discardHttpHeaders(client);
+  const bool streamActive = wifiLogActive && wifiStreamClient && wifiStreamClient.connected();
+  const uint32_t requestTimeoutMs = streamActive ? 25 : 250;
+  const String requestLine = readHttpRequestLine(client, requestTimeoutMs);
+  discardHttpHeaders(client, requestTimeoutMs);
+
+  if (streamActive && requestLine.indexOf("GET /api/stop") != 0 && requestLine.indexOf("GET /control?cmd=stop") != 0 &&
+      requestLine.indexOf("GET /api/status") != 0 && requestLine.indexOf("GET /status") != 0) {
+    sendHttpResponse(client, "application/json", "{\"busy\":true,\"message\":\"stream active, stop logging first\"}");
+    client.stop();
+    return;
+  }
 
   if (requestLine.indexOf("GET /stream") == 0) {
     if (wifiStreamClient) {

@@ -48,6 +48,7 @@ WiFi live log:
 3. Run `python tools\wifi_log_capture.py --host <device-ip> --duration 10 --out test_logs\wifi_captures\<date>\wifi_capture.csv`.
 4. Confirm GPIO15 blue LED turns on during the capture and turns off after `/api/stop`.
 5. Check row count and `ms` spacing in the CSV.
+6. From the browser page, open `/stream` and confirm the Stop WiFi Log button still stops the active stream/download.
 
 ## Required evidence to keep
 
