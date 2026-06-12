@@ -72,6 +72,10 @@ def capture(port: str, output: Path, duration_s: int, frequency_hz: int | None, 
               lines.append(text)
               if text.startswith("LIVE_TEST_END"):
                   break
+          if duration_s < 60 and now - started > duration_s:
+              ser.write(b"X")
+              ser.flush()
+              duration_s = 60
           if now - started > duration_s + 20:
               ser.write(b"X")
               ser.flush()

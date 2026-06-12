@@ -5,6 +5,17 @@ The PC generated sine tones at software volume `0.05`, with the mic held close t
 
 Raw lab captures are kept locally under `test_logs/frequency_calibration` and are not committed.
 
+## Speaker Level Check
+
+The PC speaker was tested with short 120 Hz captures at software volumes `0.015`, `0.025`, `0.035`, and `0.05`.
+All four levels avoided clipping and did not produce tone-triggered beats during the short check.
+
+The best calibration level is `--tone-volume 0.05`.
+
+- `0.035` was too close to the ambient floor during a full 60 second sweep and produced random false detections in some rows.
+- `0.05` stayed unsaturated while giving a clearer tone response above ambient.
+- Higher software volumes are not needed for this heart-sound calibration and can make the PC speaker/mic path less representative of weak chest-contact sounds.
+
 ## Result Summary
 
 | Test | Hz | Samples | Rate Hz | Beats | Rejected | Mic level mean | Saturated % | Envelope mean | Threshold mean |
