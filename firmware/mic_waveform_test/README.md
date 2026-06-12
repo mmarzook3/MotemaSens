@@ -156,6 +156,8 @@ Or use the Windows helper from the repo root. It asks for the CSV file path and 
 .\convert_stream_csv_to_html.bat
 ```
 
+The generated viewer uses separate stacked panels for mic, ECG, accelerometer and BPM/motion. Raw ECG channels are hidden by default so the first view is readable instead of putting every signal on one cluttered graph.
+
 The blue LED stays on while USB or WiFi logging is active.
 
 The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
