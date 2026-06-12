@@ -44,6 +44,7 @@ Waveshare onboard QMI8658 accelerometer:
 Status LED from custom PCB:
 
 - `LED_GREEN` = GPIO14, active high, toggles every second when firmware is running.
+- `LED_BLUE` = GPIO15, active high, turns on during USB live logging and turns off when logging stops.
 
 ## Build and upload
 
@@ -67,6 +68,7 @@ If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.
 
 The dev firmware can stream a 60 second live test over USB serial.
 During the live USB test the LCD graph is paused so serial logging keeps a stable 10 ms / 100 Hz timing.
+The blue LED stays on while the 60 second log is active.
 
 1. Flash the dev build directly over USB.
 2. Open the serial monitor at `115200`.
@@ -81,6 +83,16 @@ The firmware prints:
 - `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM and accelerometer X/Y/Z.
 - `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
+
+## Frequency calibration
+
+For mic/filter calibration, run ambient first and then generated PC tones:
+
+```powershell
+python tools\run_frequency_calibration.py --port COM14 --frequencies 60,80,100,120,150,200,250,300
+```
+
+The tool stores raw logs and writes a calibration CSV and Markdown report under `test_logs\frequency_calibration`.
 
 ## Heart-sound filtering
 

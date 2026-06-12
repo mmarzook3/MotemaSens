@@ -47,6 +47,7 @@ static constexpr int I2S_WS = 5;
 
 // Custom Lobe PCB status LED.
 static constexpr int LED_GREEN = 14;
+static constexpr int LED_BLUE = 15;
 
 // Waveshare base-board QMI8658 IMU pins.
 static constexpr int IMU_SDA = 6;
@@ -622,6 +623,7 @@ static void checkForOtaUpdate()
 static void startUsbLiveLog(uint32_t now)
 {
   usbLogActive = true;
+  digitalWrite(LED_BLUE, HIGH);
   usbLogStartMs = now;
   usbLogLastSampleMs = now;
   usbLogSamples = 0;
@@ -645,6 +647,7 @@ static void stopUsbLiveLog(uint32_t now, const char *reason)
                 (unsigned long)rejectedBeatCandidates,
                 bpm);
   usbLogActive = false;
+  digitalWrite(LED_BLUE, LOW);
 }
 
 static void handleUsbLogCommands(uint32_t now)
@@ -1227,7 +1230,9 @@ void setup()
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
   pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
   digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_BLUE, LOW);
 
   if (!gfx->begin(80000000)) {
     Serial.println("LCD begin failed");
