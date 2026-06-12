@@ -75,6 +75,10 @@ static constexpr int CENTER_Y = SCREEN_H / 2;
 static constexpr int SAFE_RADIUS = 102;
 static constexpr int HEADER_BOTTOM = 42;
 static constexpr int WAVE_MARGIN = 12;
+static constexpr int ACCEL_GRAPH_CENTER_Y = 88;
+static constexpr int ACCEL_GRAPH_HALF_H = 32;
+static constexpr int MIC_GRAPH_CENTER_Y = 156;
+static constexpr int MIC_GRAPH_HALF_H = 42;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -173,6 +177,13 @@ static int safeHalfHeightAtX(int x)
   return max(0, halfHeight);
 }
 
+static bool isSafePixel(int x, int y)
+{
+  const int dx = x - CENTER_X;
+  const int dy = y - CENTER_Y;
+  return (dx * dx + dy * dy) <= ((SAFE_RADIUS - WAVE_MARGIN) * (SAFE_RADIUS - WAVE_MARGIN));
+}
+
 static void drawRoundVerticalGrid(int x)
 {
   const int halfHeight = safeHalfHeightAtX(x);
@@ -234,7 +245,7 @@ static void drawBackground()
   }
 
   gfx->setCursor(99, 23);
-  gfx->print("ACC XYZ");
+  gfx->print("MIC ACC");
 
   gfx->setCursor(58, 35);
   gfx->setTextColor(COLOR_X, COLOR_BG);
@@ -250,6 +261,48 @@ static void drawBackground()
   gfx->print(latestAccelY, 1);
   gfx->print(" ");
   gfx->print(latestAccelZ, 1);
+}
+
+static void drawBandGrid(int graphCenterY, int graphHalfHeight)
+{
+  const int top = graphCenterY - graphHalfHeight;
+  const int bottom = graphCenterY + graphHalfHeight;
+
+  for (int x = 36; x < SCREEN_W - 24; x += 28) {
+    bool drawing = false;
+    int startY = top;
+    for (int y = top; y <= bottom; ++y) {
+      const bool safe = isSafePixel(x, y);
+      if (safe && !drawing) {
+        startY = y;
+        drawing = true;
+      } else if (!safe && drawing) {
+        gfx->drawFastVLine(x, startY, y - startY, COLOR_GRID);
+        drawing = false;
+      }
+    }
+    if (drawing) {
+      gfx->drawFastVLine(x, startY, bottom - startY + 1, COLOR_GRID);
+    }
+  }
+
+  for (int y = top; y <= bottom; y += graphHalfHeight) {
+    bool drawing = false;
+    int startX = 0;
+    for (int x = 0; x < SCREEN_W; ++x) {
+      const bool safe = isSafePixel(x, y);
+      if (safe && !drawing) {
+        startX = x;
+        drawing = true;
+      } else if (!safe && drawing) {
+        gfx->drawFastHLine(startX, y, x - startX, COLOR_GRID);
+        drawing = false;
+      }
+    }
+    if (drawing) {
+      gfx->drawFastHLine(startX, y, SCREEN_W - startX, COLOR_GRID);
+    }
+  }
 }
 
 static void addHeartLabel()
@@ -549,26 +602,36 @@ static int accelYToScreen(float value, int halfHeight)
   return clampInt16(CENTER_Y - normalized * halfHeight * 0.88f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
 }
 
-static void drawAccelAxis(const float *history, uint16_t color)
+static void drawTraceInBand(const float *history, float scale, int graphCenterY, int graphHalfHeight, uint16_t color)
 {
-  int previousY = CENTER_Y;
+  int previousY = graphCenterY;
+  int previousX = 0;
   bool hasPrevious = false;
 
   for (int x = 0; x < SCREEN_W; ++x) {
-    const int halfHeight = safeHalfHeightAtX(x);
-    if (halfHeight <= 0) {
+    const float normalized = constrain(history[x] / scale, -1.0f, 1.0f);
+    const int y = clampInt16(graphCenterY - normalized * graphHalfHeight,
+                             graphCenterY - graphHalfHeight,
+                             graphCenterY + graphHalfHeight);
+    if (!isSafePixel(x, y)) {
       hasPrevious = false;
-      previousY = CENTER_Y;
+      previousX = x;
+      previousY = y;
       continue;
     }
 
-    const int y = accelYToScreen(history[x], halfHeight);
-    if (hasPrevious) {
-      gfx->drawLine(x - 1, previousY, x, y, color);
+    if (hasPrevious && previousX == x - 1) {
+      gfx->drawLine(previousX, previousY, x, y, color);
     }
+    previousX = x;
     previousY = y;
     hasPrevious = true;
   }
+}
+
+static void drawAccelAxis(const float *history, uint16_t color)
+{
+  drawTraceInBand(history, 2.0f, CENTER_Y, safeHalfHeightAtX(CENTER_X), color);
 }
 
 static void drawAccelGraph()
@@ -577,6 +640,27 @@ static void drawAccelGraph()
   drawAccelAxis(accelXHistory, COLOR_X);
   drawAccelAxis(accelYHistory, COLOR_Y);
   drawAccelAxis(accelZHistory, COLOR_Z);
+  gfx->flush();
+}
+
+static void drawCombinedGraph()
+{
+  drawBackground();
+  drawBandGrid(ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H);
+  drawBandGrid(MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
+  gfx->print("ACC");
+  gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
+  gfx->print("MIC");
+
+  drawTraceInBand(accelXHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_X);
+  drawTraceInBand(accelYHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Y);
+  drawTraceInBand(accelZHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Z);
+  drawTraceInBand(wave, 1.0f, MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H, COLOR_WAVE);
+
   gfx->flush();
 }
 
@@ -939,7 +1023,7 @@ static void outputTask(void *)
 
     if (now - lastDrawMs >= 24) {
       lastDrawMs = now;
-      drawAccelGraph();
+      drawCombinedGraph();
     }
 
     vTaskDelay(pdMS_TO_TICKS(2));
