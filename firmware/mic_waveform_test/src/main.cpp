@@ -60,6 +60,8 @@ static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 2;
 static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
+static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
+static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -127,6 +129,12 @@ static uint8_t accelRegisterDumpsLeft = 6;
 static int16_t latestAccelRawX = 0;
 static int16_t latestAccelRawY = 0;
 static int16_t latestAccelRawZ = 0;
+static float latestMicPoint = 0.0f;
+static bool usbLogActive = false;
+static uint32_t usbLogStartMs = 0;
+static uint32_t usbLogLastSampleMs = 0;
+static uint32_t usbLogSamples = 0;
+static uint32_t usbLogBeats = 0;
 static bool imuReady = false;
 static uint8_t imuAddress = 0x6A;
 static Preferences preferences;
@@ -550,6 +558,75 @@ static void checkForOtaUpdate()
   downloadAndApplyFirmware(firmwareUrl);
 }
 
+static void startUsbLiveLog(uint32_t now)
+{
+  usbLogActive = true;
+  usbLogStartMs = now;
+  usbLogLastSampleMs = 0;
+  usbLogSamples = 0;
+  usbLogBeats = 0;
+
+  Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
+                DEVICE_VERSION,
+                (unsigned long)USB_LOG_DURATION_MS,
+                (unsigned long)USB_LOG_PERIOD_MS);
+  Serial.println("LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z");
+}
+
+static void stopUsbLiveLog(uint32_t now, const char *reason)
+{
+  Serial.printf("LIVE_TEST_END,reason=%s,elapsed_ms=%lu,samples=%lu,beats=%lu,bpm=%.1f\n",
+                reason,
+                (unsigned long)(now - usbLogStartMs),
+                (unsigned long)usbLogSamples,
+                (unsigned long)usbLogBeats,
+                bpm);
+  usbLogActive = false;
+}
+
+static void handleUsbLogCommands(uint32_t now)
+{
+  while (Serial.available() > 0) {
+    const char command = (char)Serial.read();
+    if ((command == 's' || command == 'S') && !usbLogActive) {
+      startUsbLiveLog(now);
+    } else if ((command == 'x' || command == 'X') && usbLogActive) {
+      stopUsbLiveLog(now, "stopped");
+    }
+  }
+}
+
+static void updateUsbLiveLog(uint32_t now)
+{
+  if (!usbLogActive) {
+    return;
+  }
+
+  if (now - usbLogStartMs >= USB_LOG_DURATION_MS) {
+    stopUsbLiveLog(now, "complete");
+    return;
+  }
+
+  if (usbLogLastSampleMs != 0 && now - usbLogLastSampleMs < USB_LOG_PERIOD_MS) {
+    return;
+  }
+  usbLogLastSampleMs = now;
+  ++usbLogSamples;
+
+  Serial.printf("LOG,%lu,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d\n",
+                (unsigned long)(now - usbLogStartMs),
+                latestMicPoint,
+                smoothedLevel,
+                beatEnvelope,
+                bpm,
+                latestAccelX,
+                latestAccelY,
+                latestAccelZ,
+                latestAccelRawX,
+                latestAccelRawY,
+                latestAccelRawZ);
+}
+
 static void drawWaveform()
 {
   drawBackground();
@@ -839,9 +916,9 @@ static void readAccelSample()
     ++accelReadFailuresSinceDebug;
   }
 
-  if (now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
+  if (usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
     const float magnitude = sqrtf((sample.x * sample.x) + (sample.y * sample.y) + (sample.z * sample.z));
-    Serial.printf("accel hz=%lu fail=%lu raw=%d,%d,%d g=%.2f,%.2f,%.2f mag=%.2f\n",
+    Serial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f,mag=%.2f\n",
                   (unsigned long)accelSamplesSinceDebug,
                   (unsigned long)accelReadFailuresSinceDebug,
                   latestAccelRawX, latestAccelRawY, latestAccelRawZ,
@@ -981,6 +1058,7 @@ static void drainAcquisitionQueues()
 {
   float point = 0.0f;
   while (xQueueReceive(displayPointQueue, &point, 0) == pdTRUE) {
+    latestMicPoint = point;
     pushWavePoint(point);
   }
 
@@ -988,8 +1066,15 @@ static void drainAcquisitionQueues()
   while (xQueueReceive(beatEventQueue, &event, 0) == pdTRUE) {
     addHeartLabel();
     bpm = event.bpm;
-    Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
-                  (unsigned long)event.intervalMs, event.bpm, event.level, event.gain);
+    if (usbLogActive) {
+      ++usbLogBeats;
+      Serial.printf("BEAT,%lu,interval_ms=%lu,bpm=%.1f,level=%.4f,gain=%.1f\n",
+                    (unsigned long)(millis() - usbLogStartMs),
+                    (unsigned long)event.intervalMs,
+                    event.bpm,
+                    event.level,
+                    event.gain);
+    }
   }
 
   AccelSample sample = {};
@@ -1012,6 +1097,7 @@ static void outputTask(void *)
   for (;;) {
     const uint32_t now = millis();
     updateDeviceHeartbeatLed(now);
+    handleUsbLogCommands(now);
 
     if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
       otaCheckedOnce = true;
@@ -1020,6 +1106,7 @@ static void outputTask(void *)
     }
 
     drainAcquisitionQueues();
+    updateUsbLiveLog(now);
 
     if (now - lastDrawMs >= 24) {
       lastDrawMs = now;
@@ -1081,6 +1168,7 @@ void setup()
 
   Serial.printf("mic and accel test running, acquisition core=%u output core=%u\n",
                 ACQUISITION_CORE, OUTPUT_CORE);
+  Serial.println("usb live test ready: send S for 60 seconds, X to stop");
 }
 
 void loop()
