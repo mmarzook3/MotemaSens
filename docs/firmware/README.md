@@ -35,8 +35,8 @@ The current `firmware/mic_waveform_test` firmware implements the pattern with tw
 
 | Task | Core | Priority | Current purpose |
 | --- | --- | --- | --- |
-| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads I2S mic, filters heart-sound band, detects beat events, sends display points to queues |
-| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws LCD, handles WiFi OTA, blinks GPIO14 green LED, drains acquisition queues |
+| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
+| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws LCD accelerometer graph, handles WiFi OTA, blinks GPIO14 green LED, drains acquisition queues |
 
 The current queues are:
 
@@ -44,6 +44,7 @@ The current queues are:
 | --- | --- | --- | --- |
 | `displayPointQueue` | `acquisitionTask` | `outputTask` | Signed waveform point for the LCD trace |
 | `beatEventQueue` | `acquisitionTask` | `outputTask` | Beat interval, BPM estimate, signal level and gain |
+| `accelSampleQueue` | `acquisitionTask` | `outputTask` | QMI8658 X/Y/Z acceleration in g |
 
 If a queue is full, the oldest queued item is dropped before pushing the newest item. This keeps the newest live data visible and stops the acquisition task from blocking.
 
@@ -55,6 +56,7 @@ The full firmware should keep the same split.
 
 - ADS1294 ECG sampling using DRDY interrupt.
 - I2S mic sampling using DMA.
+- QMI8658 accelerometer sampling over I2C.
 - Sensor timestamping.
 - Basic filtering or packet framing needed to preserve data.
 - Push packets into ring buffers or queues.

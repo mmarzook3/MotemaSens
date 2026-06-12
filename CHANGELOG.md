@@ -28,3 +28,4 @@
 - Changed the heartbeat display to a signed phonocardiogram-style trace with S1/S2 labels.
 - Split the firmware into acquisition and output tasks pinned to separate ESP32-S3 cores, with queues between them.
 - Added firmware architecture documentation so the acquisition/output split stays clear during development.
+- Added QMI8658 accelerometer X/Y/Z acquisition on Core 0 and a Core 1 LCD graph.

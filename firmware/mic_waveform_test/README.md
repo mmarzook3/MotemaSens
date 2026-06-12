@@ -2,7 +2,8 @@
 
 This is a quick test software for the custom Lobe ESP32-S3 board.
 
-It reads the SPH0645LM4H-B I2S mic and shows a smooth live waveform on the Waveshare 1.28 inch round LCD.
+It reads the SPH0645LM4H-B I2S mic and the Waveshare onboard QMI8658 accelerometer.
+The round LCD currently shows a smooth live X/Y/Z accelerometer graph.
 
 It also connects to WiFi and checks GitHub for a newer firmware build. When a new firmware build is published by the GitHub Action, the board downloads it, flashes it and reboots.
 
@@ -10,8 +11,8 @@ It also connects to WiFi and checks GitHub for a newer firmware build. When a ne
 
 This test firmware follows the main firmware architecture in `../../docs/firmware/README.md`.
 
-- `acquisitionTask` is pinned to Core 0. It reads/processes the mic and sends queue events.
-- `outputTask` is pinned to Core 1. It owns the LCD, WiFi OTA and GPIO14 green heartbeat LED.
+- `acquisitionTask` is pinned to Core 0. It reads/processes the mic and accelerometer and sends queue events.
+- `outputTask` is pinned to Core 1. It owns the LCD accelerometer graph, WiFi OTA and GPIO14 green heartbeat LED.
 - Acquisition never waits for LCD, WiFi, OTA or future SD/USB/BLE output.
 
 ## Hardware pins
@@ -32,6 +33,12 @@ Mic from custom PCB:
 - `I2S_WS` = GPIO5
 
 The mic `SELECT` pin is tied low, so the firmware reads the left/low-WS slot first.
+
+Waveshare onboard QMI8658 accelerometer:
+
+- `IMU_SDA` = GPIO6
+- `IMU_SCL` = GPIO7
+- I2C address is auto-detected at `0x6A` or `0x6B`.
 
 Status LED from custom PCB:
 

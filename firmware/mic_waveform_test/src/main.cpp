@@ -5,6 +5,7 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <Wire.h>
 #include <driver/i2s.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -47,6 +48,10 @@ static constexpr int I2S_WS = 5;
 // Custom Lobe PCB status LED.
 static constexpr int LED_GREEN = 14;
 
+// Waveshare base-board QMI8658 IMU pins.
+static constexpr int IMU_SDA = 6;
+static constexpr int IMU_SCL = 7;
+
 static constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 static constexpr i2s_channel_fmt_t I2S_CHANNEL = I2S_CHANNEL_FMT_ONLY_LEFT;
 static constexpr uint32_t SAMPLE_RATE = 16000;
@@ -62,6 +67,7 @@ static constexpr UBaseType_t OUTPUT_TASK_PRIORITY = 1;
 
 static constexpr int SCREEN_W = 240;
 static constexpr int SCREEN_H = 240;
+static constexpr size_t ACCEL_HISTORY = SCREEN_W;
 static constexpr int CENTER_X = SCREEN_W / 2;
 static constexpr int CENTER_Y = SCREEN_H / 2;
 static constexpr int SAFE_RADIUS = 102;
@@ -73,12 +79,21 @@ static constexpr uint16_t COLOR_GRID = 0x3B6D;
 static constexpr uint16_t COLOR_WAVE = 0xDDFB;
 static constexpr uint16_t COLOR_TEXT = 0xFFFF;
 static constexpr uint16_t COLOR_DIM = 0x9D76;
+static constexpr uint16_t COLOR_X = 0xF986;
+static constexpr uint16_t COLOR_Y = 0x87F0;
+static constexpr uint16_t COLOR_Z = 0x7DFF;
 
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, GFX_NOT_DEFINED, SPI2_HOST);
 Arduino_GFX *display = new Arduino_GC9A01(bus, LCD_RST, 0, true);
 Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, SCREEN_H, display);
 
 static float wave[SCREEN_W];
+static float accelXHistory[ACCEL_HISTORY];
+static float accelYHistory[ACCEL_HISTORY];
+static float accelZHistory[ACCEL_HISTORY];
+static float latestAccelX = 0.0f;
+static float latestAccelY = 0.0f;
+static float latestAccelZ = 0.0f;
 static float dc = 0.0f;
 static float lowFast = 0.0f;
 static float lowSlow = 0.0f;
@@ -97,9 +112,13 @@ static uint32_t lastLedToggleMs = 0;
 static bool ledGreenOn = false;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
+static uint32_t lastAccelReadMs = 0;
+static bool imuReady = false;
+static uint8_t imuAddress = 0x6A;
 static Preferences preferences;
 static QueueHandle_t displayPointQueue = nullptr;
 static QueueHandle_t beatEventQueue = nullptr;
+static QueueHandle_t accelSampleQueue = nullptr;
 
 struct HeartLabel {
   int x;
@@ -111,6 +130,13 @@ struct BeatEvent {
   float bpm;
   float level;
   float gain;
+};
+
+struct AccelSample {
+  float x;
+  float y;
+  float z;
+  bool valid;
 };
 
 static HeartLabel labels[LABEL_HISTORY] = {};
@@ -173,8 +199,8 @@ static void drawBackground()
   gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
   gfx->setTextSize(1);
-  gfx->setCursor(76, 13);
-  gfx->print("HEART MIC");
+  gfx->setCursor(88, 13);
+  gfx->print("ACC XYZ");
 
   if (WiFi.status() == WL_CONNECTED) {
     gfx->setTextSize(1);
@@ -182,11 +208,20 @@ static void drawBackground()
     gfx->print(WiFi.localIP().toString());
   }
 
-  if (bpm > 30.0f && bpm < 220.0f) {
-    gfx->setCursor(96, 35);
-    gfx->print((int)(bpm + 0.5f));
-    gfx->print(" BPM");
-  }
+  gfx->setCursor(58, 35);
+  gfx->setTextColor(COLOR_X, COLOR_BG);
+  gfx->print("X");
+  gfx->setTextColor(COLOR_Y, COLOR_BG);
+  gfx->print(" Y");
+  gfx->setTextColor(COLOR_Z, COLOR_BG);
+  gfx->print(" Z");
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+  gfx->print("  ");
+  gfx->print(latestAccelX, 1);
+  gfx->print(" ");
+  gfx->print(latestAccelY, 1);
+  gfx->print(" ");
+  gfx->print(latestAccelZ, 1);
 }
 
 static void addHeartLabel()
@@ -223,6 +258,19 @@ static void sendBeatEvent(const BeatEvent &event)
     BeatEvent dropped = {};
     xQueueReceive(beatEventQueue, &dropped, 0);
     xQueueSend(beatEventQueue, &event, 0);
+  }
+}
+
+static void sendAccelSample(const AccelSample &sample)
+{
+  if (!accelSampleQueue) {
+    return;
+  }
+
+  if (xQueueSend(accelSampleQueue, &sample, 0) != pdTRUE) {
+    AccelSample dropped = {};
+    xQueueReceive(accelSampleQueue, &dropped, 0);
+    xQueueSend(accelSampleQueue, &sample, 0);
   }
 }
 
@@ -443,6 +491,63 @@ static void drawWaveform()
   gfx->flush();
 }
 
+static void pushAccelSample(const AccelSample &sample)
+{
+  memmove(&accelXHistory[0], &accelXHistory[1], sizeof(accelXHistory) - sizeof(accelXHistory[0]));
+  memmove(&accelYHistory[0], &accelYHistory[1], sizeof(accelYHistory) - sizeof(accelYHistory[0]));
+  memmove(&accelZHistory[0], &accelZHistory[1], sizeof(accelZHistory) - sizeof(accelZHistory[0]));
+
+  if (sample.valid) {
+    latestAccelX = sample.x;
+    latestAccelY = sample.y;
+    latestAccelZ = sample.z;
+    accelXHistory[ACCEL_HISTORY - 1] = constrain(sample.x, -2.0f, 2.0f);
+    accelYHistory[ACCEL_HISTORY - 1] = constrain(sample.y, -2.0f, 2.0f);
+    accelZHistory[ACCEL_HISTORY - 1] = constrain(sample.z, -2.0f, 2.0f);
+  } else {
+    accelXHistory[ACCEL_HISTORY - 1] = 0.0f;
+    accelYHistory[ACCEL_HISTORY - 1] = 0.0f;
+    accelZHistory[ACCEL_HISTORY - 1] = 0.0f;
+  }
+}
+
+static int accelYToScreen(float value, int halfHeight)
+{
+  const float normalized = constrain(value / 2.0f, -1.0f, 1.0f);
+  return clampInt16(CENTER_Y - normalized * halfHeight * 0.88f, CENTER_Y - halfHeight, CENTER_Y + halfHeight);
+}
+
+static void drawAccelAxis(const float *history, uint16_t color)
+{
+  int previousY = CENTER_Y;
+  bool hasPrevious = false;
+
+  for (int x = 0; x < SCREEN_W; ++x) {
+    const int halfHeight = safeHalfHeightAtX(x);
+    if (halfHeight <= 0) {
+      hasPrevious = false;
+      previousY = CENTER_Y;
+      continue;
+    }
+
+    const int y = accelYToScreen(history[x], halfHeight);
+    if (hasPrevious) {
+      gfx->drawLine(x - 1, previousY, x, y, color);
+    }
+    previousY = y;
+    hasPrevious = true;
+  }
+}
+
+static void drawAccelGraph()
+{
+  drawBackground();
+  drawAccelAxis(accelXHistory, COLOR_X);
+  drawAccelAxis(accelYHistory, COLOR_Y);
+  drawAccelAxis(accelZHistory, COLOR_Z);
+  gfx->flush();
+}
+
 static void pushWavePoint(float sample)
 {
   memmove(&wave[0], &wave[1], sizeof(wave) - sizeof(wave[0]));
@@ -482,6 +587,121 @@ static void updateBeatDetector(float energy)
   }
 
   lastBeatMs = now;
+}
+
+static bool qmiWriteRegister(uint8_t reg, uint8_t value)
+{
+  Wire.beginTransmission(imuAddress);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+static bool qmiReadRegister(uint8_t reg, uint8_t *buffer, uint8_t length)
+{
+  Wire.beginTransmission(imuAddress);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  const uint8_t received = Wire.requestFrom(imuAddress, length);
+  if (received != length) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < length; ++i) {
+    buffer[i] = Wire.read();
+  }
+  return true;
+}
+
+static bool qmiReadByte(uint8_t address, uint8_t reg, uint8_t &value)
+{
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  if (Wire.requestFrom(address, (uint8_t)1) != 1) {
+    return false;
+  }
+
+  value = Wire.read();
+  return true;
+}
+
+static int16_t qmiInt16(uint8_t lo, uint8_t hi)
+{
+  return (int16_t)(((uint16_t)hi << 8) | lo);
+}
+
+static bool setupQmi8658()
+{
+  Wire.begin(IMU_SDA, IMU_SCL);
+  Wire.setClock(400000);
+  delay(20);
+
+  uint8_t who = 0;
+  for (uint8_t address : { (uint8_t)0x6A, (uint8_t)0x6B }) {
+    if (qmiReadByte(address, 0x00, who) && who == 0x05) {
+      imuAddress = address;
+      break;
+    }
+  }
+
+  if (who != 0x05) {
+    Serial.println("QMI8658 not found");
+    return false;
+  }
+
+  // CTRL1 enables auto-increment; CTRL2 sets accel to +/-8g at 125 Hz; CTRL7 enables accel only.
+  const bool ok = qmiWriteRegister(0x02, 0x60) &&
+                  qmiWriteRegister(0x08, 0x00) &&
+                  qmiWriteRegister(0x03, 0x26) &&
+                  qmiWriteRegister(0x08, 0x01);
+  if (ok) {
+    Serial.printf("QMI8658 ready at 0x%02X\n", imuAddress);
+  } else {
+    Serial.println("QMI8658 init failed");
+  }
+  return ok;
+}
+
+static bool readQmi8658Accel(float &x, float &y, float &z)
+{
+  uint8_t buffer[6] = {};
+  if (!qmiReadRegister(0x35, buffer, sizeof(buffer))) {
+    return false;
+  }
+
+  const int16_t rawX = qmiInt16(buffer[0], buffer[1]);
+  const int16_t rawY = qmiInt16(buffer[2], buffer[3]);
+  const int16_t rawZ = qmiInt16(buffer[4], buffer[5]);
+
+  // +/-8g full scale uses 4096 LSB/g.
+  x = (float)rawX / 4096.0f;
+  y = (float)rawY / 4096.0f;
+  z = (float)rawZ / 4096.0f;
+  return true;
+}
+
+static void readAccelSample()
+{
+  if (!imuReady) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (now - lastAccelReadMs < 40) {
+    return;
+  }
+  lastAccelReadMs = now;
+
+  AccelSample sample = {};
+  sample.valid = readQmi8658Accel(sample.x, sample.y, sample.z);
+  sendAccelSample(sample);
 }
 
 static void readMicSamples()
@@ -609,12 +829,18 @@ static void drainAcquisitionQueues()
     Serial.printf("beat interval=%lu ms bpm=%.1f level=%.3f gain=%.1f\n",
                   (unsigned long)event.intervalMs, event.bpm, event.level, event.gain);
   }
+
+  AccelSample sample = {};
+  while (xQueueReceive(accelSampleQueue, &sample, 0) == pdTRUE) {
+    pushAccelSample(sample);
+  }
 }
 
 static void acquisitionTask(void *)
 {
   for (;;) {
     readMicSamples();
+    readAccelSample();
   }
 }
 
@@ -634,7 +860,7 @@ static void outputTask(void *)
 
     if (now - lastDrawMs >= 24) {
       lastDrawMs = now;
-      drawWaveform();
+      drawAccelGraph();
     }
 
     vTaskDelay(pdMS_TO_TICKS(2));
@@ -661,15 +887,26 @@ void setup()
   connectWifi();
   drawBackground();
   gfx->flush();
+  imuReady = setupQmi8658();
   setupI2S();
 
   for (float &point : wave) {
     point = 0.0f;
   }
+  for (float &point : accelXHistory) {
+    point = 0.0f;
+  }
+  for (float &point : accelYHistory) {
+    point = 0.0f;
+  }
+  for (float &point : accelZHistory) {
+    point = 0.0f;
+  }
 
   displayPointQueue = xQueueCreate(96, sizeof(float));
   beatEventQueue = xQueueCreate(12, sizeof(BeatEvent));
-  if (!displayPointQueue || !beatEventQueue) {
+  accelSampleQueue = xQueueCreate(64, sizeof(AccelSample));
+  if (!displayPointQueue || !beatEventQueue || !accelSampleQueue) {
     Serial.println("queue create failed");
     ESP.restart();
   }
@@ -679,7 +916,7 @@ void setup()
   xTaskCreatePinnedToCore(outputTask, "output", OUTPUT_TASK_STACK, nullptr,
                           OUTPUT_TASK_PRIORITY, nullptr, OUTPUT_CORE);
 
-  Serial.printf("mic waveform test running, acquisition core=%u output core=%u\n",
+  Serial.printf("mic and accel test running, acquisition core=%u output core=%u\n",
                 ACQUISITION_CORE, OUTPUT_CORE);
 }
 
