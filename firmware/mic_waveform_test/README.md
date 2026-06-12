@@ -21,6 +21,7 @@ The sensor modules are split into separate files:
 - `mic_sensor.*` for SPH0645 I2S mic acquisition and mic display points.
 - `accel_sensor.*` for QMI8658 accelerometer acquisition.
 - `ecg_ads1294.*` for ADS1294 ECG SPI bring-up and raw sample frames.
+- `spi_display_guard.*` for serialising ADS1294 SPI reads and LCD flushes so the round display is not corrupted by cross-core SPI/DMA activity.
 - `sensor_config.h` for enable flags and shared pin definitions.
 
 Compile-time enable flags:

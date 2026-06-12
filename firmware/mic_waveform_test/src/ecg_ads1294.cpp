@@ -1,6 +1,7 @@
 #include "ecg_ads1294.h"
 
 #include "sensor_config.h"
+#include "spi_display_guard.h"
 #include <SPI.h>
 
 static constexpr uint32_t ECG_SPI_HZ = 1000000;
@@ -29,16 +30,19 @@ static SPISettings ecgSettings(ECG_SPI_HZ, MSBFIRST, SPI_MODE1);
 
 void EcgAds1294::command(uint8_t value)
 {
+  lockSpiDisplayGuard();
   ecgSpi.beginTransaction(ecgSettings);
   digitalWrite(ECG_CS, LOW);
   ecgSpi.transfer(value);
   digitalWrite(ECG_CS, HIGH);
   ecgSpi.endTransaction();
+  unlockSpiDisplayGuard();
   delayMicroseconds(4);
 }
 
 uint8_t EcgAds1294::readRegister(uint8_t address)
 {
+  lockSpiDisplayGuard();
   ecgSpi.beginTransaction(ecgSettings);
   digitalWrite(ECG_CS, LOW);
   ecgSpi.transfer(CMD_RREG | (address & 0x1F));
@@ -46,12 +50,14 @@ uint8_t EcgAds1294::readRegister(uint8_t address)
   const uint8_t value = ecgSpi.transfer(0x00);
   digitalWrite(ECG_CS, HIGH);
   ecgSpi.endTransaction();
+  unlockSpiDisplayGuard();
   delayMicroseconds(4);
   return value;
 }
 
 void EcgAds1294::writeRegister(uint8_t address, uint8_t value)
 {
+  lockSpiDisplayGuard();
   ecgSpi.beginTransaction(ecgSettings);
   digitalWrite(ECG_CS, LOW);
   ecgSpi.transfer(CMD_WREG | (address & 0x1F));
@@ -59,6 +65,7 @@ void EcgAds1294::writeRegister(uint8_t address, uint8_t value)
   ecgSpi.transfer(value);
   digitalWrite(ECG_CS, HIGH);
   ecgSpi.endTransaction();
+  unlockSpiDisplayGuard();
   delayMicroseconds(4);
 }
 
@@ -150,6 +157,7 @@ int32_t EcgAds1294::readInt24(uint8_t b0, uint8_t b1, uint8_t b2) const
 bool EcgAds1294::readDataFrame(EcgSample &sample)
 {
   uint8_t data[3 + (ECG_CHANNELS * 3)] = {};
+  lockSpiDisplayGuard();
   ecgSpi.beginTransaction(ecgSettings);
   digitalWrite(ECG_CS, LOW);
   ecgSpi.transfer(CMD_RDATA);
@@ -159,6 +167,7 @@ bool EcgAds1294::readDataFrame(EcgSample &sample)
   }
   digitalWrite(ECG_CS, HIGH);
   ecgSpi.endTransaction();
+  unlockSpiDisplayGuard();
 
   sample.timestampMs = millis();
   sample.sequence = ++sequence_;

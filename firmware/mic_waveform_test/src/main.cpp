@@ -14,6 +14,7 @@
 #include "ecg_ads1294.h"
 #include "mic_sensor.h"
 #include "sensor_config.h"
+#include "spi_display_guard.h"
 
 #if __has_include("local_secrets.h")
 #include "local_secrets.h"
@@ -165,6 +166,13 @@ static int16_t clampInt16(float value, int16_t minValue, int16_t maxValue)
   if (value < minValue) return minValue;
   if (value > maxValue) return maxValue;
   return (int16_t)value;
+}
+
+static void flushDisplay()
+{
+  lockSpiDisplayGuard();
+  gfx->flush();
+  unlockSpiDisplayGuard();
 }
 
 static int safeHalfHeightAtX(int x)
@@ -729,7 +737,7 @@ static void drawWaveform()
     previousY = y;
   }
 
-  gfx->flush();
+  flushDisplay();
 }
 
 static void pushAccelSample(const AccelSample &sample)
@@ -806,7 +814,7 @@ static void drawAccelGraph()
   drawAccelAxis(accelXHistory, COLOR_X);
   drawAccelAxis(accelYHistory, COLOR_Y);
   drawAccelAxis(accelZHistory, COLOR_Z);
-  gfx->flush();
+  flushDisplay();
 }
 
 static void drawCombinedGraph()
@@ -832,7 +840,7 @@ static void drawCombinedGraph()
   drawTraceInBand(accelYHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Y);
   drawTraceInBand(accelZHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Z);
 
-  gfx->flush();
+  flushDisplay();
 }
 
 static void pushWavePoint(float sample)
@@ -1089,7 +1097,7 @@ void setup()
   }
 
   drawBackground();
-  gfx->flush();
+  flushDisplay();
   connectWifi();
   drawBackground();
   gfx->flush();

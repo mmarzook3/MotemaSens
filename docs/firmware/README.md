@@ -54,11 +54,13 @@ The current dev firmware keeps sensor code in separate modules under `firmware/m
 - `mic_sensor.*`
 - `accel_sensor.*`
 - `ecg_ads1294.*`
+- `spi_display_guard.*`
 - `sensor_config.h`
 
 Each sensor can be disabled at build time with `ENABLE_MIC_SENSOR`, `ENABLE_ACCEL_SENSOR` or `ENABLE_ECG_SENSOR`.
 
 The current ECG dev build uses ADS1294 `RDATA` reads every 10 ms so the LCD and USB log stay close to the 100 Hz dev cadence without depending on a narrow DRDY pulse. If repeated all-zero frames are read, the driver restarts conversions so the display does not remain frozen. The final logger should move ECG to an interrupt or DMA-style path before increasing the ECG sample rate.
+LCD flushes and ADS1294 SPI reads are protected with a shared guard. Keep this in place while display and ECG run on different cores, because overlapping SPI/DMA activity can corrupt the round LCD image.
 
 ## Future full product layout
 
