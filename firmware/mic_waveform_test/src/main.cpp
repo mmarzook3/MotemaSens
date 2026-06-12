@@ -62,6 +62,8 @@ static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
+static constexpr uint32_t HEART_REFRACTORY_MS = 620;
+static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
 static constexpr float HEART_NOISE_GATE = 0.045f;
@@ -125,6 +127,11 @@ static float lastAccelZ = 0.0f;
 static bool haveLastAccel = false;
 static uint32_t lastBeatMs = 0;
 static bool beatArmed = true;
+static bool beatCandidateActive = false;
+static uint32_t beatCandidateStartMs = 0;
+static uint32_t beatCandidatePeakMs = 0;
+static float beatCandidatePeakLevel = 0.0f;
+static float beatCandidatePeakGain = 0.0f;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastLedToggleMs = 0;
 static bool ledGreenOn = false;
@@ -157,6 +164,7 @@ struct HeartLabel {
 };
 
 struct BeatEvent {
+  uint32_t beatMs;
   uint32_t intervalMs;
   float bpm;
   float level;
@@ -357,6 +365,31 @@ static void sendBeatEvent(const BeatEvent &event)
     xQueueReceive(beatEventQueue, &dropped, 0);
     xQueueSend(beatEventQueue, &event, 0);
   }
+}
+
+static void confirmBeatCandidate()
+{
+  if (!beatCandidateActive) {
+    return;
+  }
+
+  const uint32_t beatMs = beatCandidatePeakMs;
+  const float beatLevel = beatCandidatePeakLevel;
+  const float beatGain = beatCandidatePeakGain;
+  beatCandidateActive = false;
+  beatArmed = false;
+
+  if (lastBeatMs > 0) {
+    const uint32_t intervalMs = beatMs - lastBeatMs;
+    if (intervalMs >= HEART_REFRACTORY_MS && intervalMs <= 1800) {
+      const float instantBpm = 60000.0f / (float)intervalMs;
+      acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
+      BeatEvent event = {beatMs, intervalMs, acquisitionBpm, beatLevel, beatGain};
+      sendBeatEvent(event);
+    }
+  }
+
+  lastBeatMs = beatMs;
 }
 
 static void sendAccelSample(const AccelSample &sample)
@@ -793,28 +826,35 @@ static void updateBeatDetector(float energy)
     beatArmed = true;
   }
 
-  const bool beatCandidate = motionQuiet &&
-                             beatArmed &&
-                             beatEnvelope > beatThreshold &&
-                             gatedEnergy > beatThreshold &&
-                             beatEnvelope > beatFloor + 0.12f;
-  if (!beatCandidate || now - lastBeatMs < 620) {
-    return;
-  }
+  if (beatCandidateActive) {
+    if (beatEnvelope > beatCandidatePeakLevel) {
+      beatCandidatePeakLevel = beatEnvelope;
+      beatCandidatePeakMs = now;
+      beatCandidatePeakGain = autoGain;
+    }
 
-  beatArmed = false;
-
-  if (lastBeatMs > 0) {
-    const uint32_t intervalMs = now - lastBeatMs;
-    if (intervalMs >= 620 && intervalMs <= 1800) {
-      const float instantBpm = 60000.0f / (float)intervalMs;
-      acquisitionBpm = (acquisitionBpm <= 0.0f) ? instantBpm : (acquisitionBpm * 0.78f) + (instantBpm * 0.22f);
-      BeatEvent event = {intervalMs, acquisitionBpm, beatEnvelope, autoGain};
-      sendBeatEvent(event);
+    const bool peakHasSettled = beatEnvelope < beatCandidatePeakLevel * 0.78f;
+    const bool peakWindowExpired = now - beatCandidateStartMs >= HEART_PEAK_HOLD_MS;
+    if (!motionQuiet || peakHasSettled || peakWindowExpired) {
+      confirmBeatCandidate();
     }
   }
 
-  lastBeatMs = now;
+  const bool beatCandidate = motionQuiet &&
+                             beatArmed &&
+                             !beatCandidateActive &&
+                             beatEnvelope > beatThreshold &&
+                             gatedEnergy > beatThreshold &&
+                             beatEnvelope > beatFloor + 0.12f;
+  if (!beatCandidate || now - lastBeatMs < HEART_REFRACTORY_MS) {
+    return;
+  }
+
+  beatCandidateActive = true;
+  beatCandidateStartMs = now;
+  beatCandidatePeakMs = now;
+  beatCandidatePeakLevel = beatEnvelope;
+  beatCandidatePeakGain = autoGain;
 }
 
 static bool qmiWriteRegister(uint8_t reg, uint8_t value)
@@ -1103,12 +1143,15 @@ static void drainAcquisitionQueues()
     bpm = event.bpm;
     if (usbLogActive) {
       ++usbLogBeats;
-      Serial.printf("BEAT,%lu,interval_ms=%lu,bpm=%.1f,level=%.4f,gain=%.1f\n",
-                    (unsigned long)(millis() - usbLogStartMs),
+      const uint32_t eventElapsedMs = (event.beatMs >= usbLogStartMs) ? (event.beatMs - usbLogStartMs) : 0;
+      const uint32_t outputDelayMs = millis() - event.beatMs;
+      Serial.printf("BEAT,%lu,interval_ms=%lu,bpm=%.1f,level=%.4f,gain=%.1f,delay_ms=%lu\n",
+                    (unsigned long)eventElapsedMs,
                     (unsigned long)event.intervalMs,
                     event.bpm,
                     event.level,
-                    event.gain);
+                    event.gain,
+                    (unsigned long)outputDelayMs);
     }
   }
 
