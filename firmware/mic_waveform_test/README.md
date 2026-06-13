@@ -106,6 +106,8 @@ pio run -t upload
 pio device monitor
 ```
 
+Dev builds enable `ARDUINO_USB_CDC_ON_BOOT=1`, so `Serial` debug, USB live logging and ECG diagnostic lines are visible on the same USB port used for flashing.
+
 If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.cpp` from `I2S_CHANNEL_FMT_ONLY_LEFT` to `I2S_CHANNEL_FMT_ONLY_RIGHT`.
 
 ## USB live heart-sound test
@@ -134,6 +136,14 @@ ECG diagnostic CSV fields:
 - `ecg_sat_mask` marks raw channels close to ADC full-scale.
 - `ecg_diag_flags` is a bitmask: `0x0001` lead-off, `0x0002` DC saturation, `0x0004` cable/common-mode noise, `0x0008` possible RLD instability, `0x0010` RLD configured, `0x0020` lead-off configured.
 - `ecg_common_step` and `ecg_diff_step` are smoothed step-size diagnostics used to spot shield/cable noise and RLD oscillation.
+
+The LCD status area shows the same ECG health in compact form:
+
+- `NOADS` means the ADS1294 did not answer the ID register read, so ECG diagnostics cannot run yet.
+- `LO` means lead-off is currently detected.
+- `SAT` means one or more ADS channels are close to the ADC rails.
+- `RLD` means the RLD stability heuristic sees sustained high common-mode and differential movement.
+- The row `P N S F C` shows positive lead-off mask, negative lead-off mask, saturation mask, diagnostic flags and common-mode step.
 
 ## WiFi live logging and control
 

@@ -43,13 +43,38 @@ Detected device:
 
 ## Runtime verification status
 
-Serial capture did not return boot text in this Codex session after upload. The usual WiFi status IP did not respond from this PC after flashing, so live ADS1294 diagnostic register values were not captured in this result file.
+USB serial was initially not visible because the dev build had `ARDUINO_USB_CDC_ON_BOOT=0`. The dev build now enables USB CDC on boot, and serial diagnostic capture works on `COM5`.
+
+Boot capture result:
+
+```text
+wifi connected, ip=192.168.5.89
+ADS1294 not ready, id=0xFF
+ECG_DIAG,ready=0,seq=0,status=000000,lop=00,lon=00,sat=00,flags=0000,common=0.0,diff=0.0,ch1=0,ch2=0,ch3=0,ch4=0
+```
+
+WiFi `/api/status` result also reports:
+
+```json
+{
+  "ip": "192.168.5.89",
+  "ecg_seq": 0,
+  "ecg_ready": false,
+  "ecg_lead_off_p": "0",
+  "ecg_lead_off_n": "0",
+  "ecg_sat_mask": "0",
+  "ecg_diag_flags": "0"
+}
+```
+
+This means the ECG diagnostic display/log plumbing works, but this connected hardware setup did not allow real ADS1294 lead-off/RLD/saturation testing yet. The ADS1294 SPI read returns `0xFF`, so the chip is not responding to the firmware.
 
 Next live ECG check should capture:
 
 - Boot line `ADS1294 diag ...`
 - `/api/status` fields `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step`, `ecg_diff_step`
 - One USB or WiFi CSV capture with electrodes open and then connected
+- A non-`0xFF` ADS1294 ID before trying to validate lead-off/RLD behaviour
 
 ## Expected first checks
 

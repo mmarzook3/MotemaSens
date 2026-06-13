@@ -41,6 +41,7 @@ static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
+static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 1000;
 static constexpr uint16_t WIFI_LOG_PORT = 80;
 static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
@@ -120,6 +121,7 @@ static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static uint32_t lastAccelReadMs = 0;
 static uint32_t lastAccelDebugMs = 0;
+static uint32_t lastEcgDiagDebugMs = 0;
 static uint32_t accelSamplesSinceDebug = 0;
 static uint32_t accelReadFailuresSinceDebug = 0;
 static int16_t latestAccelRawX = 0;
@@ -304,7 +306,10 @@ static void drawStatusLine()
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
   gfx->print(" #");
   gfx->print(latestEcgSequence);
-  if (latestEcgDiagnosticFlags & ECG_DIAG_LEAD_OFF) {
+  if (!ecgSensor.ready()) {
+    gfx->setTextColor(COLOR_X, COLOR_BG);
+    gfx->print(" NOADS");
+  } else if (latestEcgDiagnosticFlags & ECG_DIAG_LEAD_OFF) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
     gfx->print(" LO");
   } else if (latestEcgDiagnosticFlags & ECG_DIAG_DC_SATURATION) {
@@ -315,6 +320,23 @@ static void drawStatusLine()
     gfx->print(" RLD");
   }
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+}
+
+static void drawEcgDiagnosticLine()
+{
+  gfx->setTextSize(1);
+  gfx->setCursor(42, 47);
+  gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  gfx->print("P");
+  gfx->print(latestEcgLeadOffPositive, HEX);
+  gfx->print(" N");
+  gfx->print(latestEcgLeadOffNegative, HEX);
+  gfx->print(" S");
+  gfx->print(latestEcgSaturationMask, HEX);
+  gfx->print(" F");
+  gfx->print(latestEcgDiagnosticFlags, HEX);
+  gfx->print(" C");
+  gfx->print((int)latestEcgCommonModeStep);
 }
 
 static void drawBandGrid(int graphCenterY, int graphHalfHeight)
@@ -774,6 +796,28 @@ static void updateUsbLiveLog(uint32_t now)
   Serial.print(row);
 }
 
+static void updateEcgDiagDebug(uint32_t now)
+{
+  if (usbLogActive || wifiLogActive || now - lastEcgDiagDebugMs < ECG_DIAG_DEBUG_PERIOD_MS) {
+    return;
+  }
+  lastEcgDiagDebugMs = now;
+  Serial.printf("ECG_DIAG,ready=%u,seq=%lu,status=%06lX,lop=%02X,lon=%02X,sat=%02X,flags=%04X,common=%.1f,diff=%.1f,ch1=%ld,ch2=%ld,ch3=%ld,ch4=%ld\n",
+                (unsigned)ecgSensor.ready(),
+                (unsigned long)latestEcgSequence,
+                (unsigned long)latestEcgStatus,
+                (unsigned)latestEcgLeadOffPositive,
+                (unsigned)latestEcgLeadOffNegative,
+                (unsigned)latestEcgSaturationMask,
+                (unsigned)latestEcgDiagnosticFlags,
+                latestEcgCommonModeStep,
+                latestEcgDifferentialStep,
+                (long)latestEcgCh1,
+                (long)latestEcgCh2,
+                (long)latestEcgCh3,
+                (long)latestEcgCh4);
+}
+
 static void startWifiLog(uint32_t now)
 {
   wifiLogActive = true;
@@ -1121,14 +1165,13 @@ static void drawCombinedGraph()
 {
   drawBackground();
   drawStatusLine();
+  drawEcgDiagnosticLine();
   drawBandGrid(ECG_GRAPH_CENTER_Y, ECG_GRAPH_HALF_H);
   drawBandGrid(MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H);
   drawBandGrid(ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H);
 
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->setCursor(45, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
-  gfx->print("ECG CH1-CH2");
   gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
   gfx->print("MIC");
   gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
@@ -1386,6 +1429,7 @@ static void outputTask(void *)
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
     handleWifiHttpClient(now);
+    updateEcgDiagDebug(now);
 
     if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
       otaCheckedOnce = true;
