@@ -80,7 +80,7 @@ Accelerometer tap input is currently a dev test feature. Core 1 checks accelerom
 
 The green device heartbeat LED on GPIO14 is driven by LEDC PWM as a breathing pulse. It is updated from Core 1 and remains separate from the Core 0 acquisition path.
 
-The LCD boot flow starts with a MotemaSens branded startup screen and a 3 second initialising progress bar. After this splash screen, WiFi, sensors, logging control and the normal live display start.
+The LCD boot flow starts with a MotemaSens branded startup screen and a 3 second initialising progress bar. After this splash screen, WiFi, sensors, logging control and the normal live display start. The startup icon source is tracked as `docs/firmware/assets/motemasens_logo_source.svg`; firmware uses a generated 1-bit mask header so no runtime file loading is needed.
 
 ## Future full product layout
 

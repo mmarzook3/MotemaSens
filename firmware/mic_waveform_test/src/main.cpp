@@ -14,6 +14,7 @@
 #include "debug_serial.h"
 #include "ecg_ads1294.h"
 #include "mic_sensor.h"
+#include "motemasens_logo_mask.h"
 #include "sensor_config.h"
 #include "spi_display_guard.h"
 
@@ -316,48 +317,21 @@ static void drawBackground()
   gfx->fillScreen(COLOR_BG);
 }
 
-static void drawThickLine(int x0, int y0, int x1, int y1, uint16_t color)
-{
-  gfx->drawLine(x0, y0, x1, y1, color);
-  gfx->drawLine(x0 + 1, y0, x1 + 1, y1, color);
-  gfx->drawLine(x0 - 1, y0, x1 - 1, y1, color);
-  gfx->drawLine(x0, y0 + 1, x1, y1 + 1, color);
-  gfx->drawLine(x0, y0 - 1, x1, y1 - 1, color);
-}
-
 static void drawStartupIcon()
 {
   const uint16_t c = COLOR_SPLASH_YELLOW;
+  const int startX = CENTER_X - (MOTEMASENS_LOGO_W / 2);
+  const int startY = 27;
 
-  for (int r = 0; r < 3; ++r) {
-    gfx->drawCircle(92, 74, 23 + r, c);
-    gfx->drawCircle(139, 74, 23 + r, c);
+  for (int y = 0; y < MOTEMASENS_LOGO_H; ++y) {
+    for (int x = 0; x < MOTEMASENS_LOGO_W; ++x) {
+      const int byteIndex = y * MOTEMASENS_LOGO_BYTES_PER_ROW + (x / 8);
+      const uint8_t maskByte = pgm_read_byte(&MOTEMASENS_LOGO_MASK[byteIndex]);
+      if (maskByte & (0x80 >> (x & 7))) {
+        gfx->drawPixel(startX + x, startY + y, c);
+      }
+    }
   }
-  gfx->fillRect(70, 75, 92, 24, COLOR_SPLASH_BG);
-  drawThickLine(70, 78, 120, 128, c);
-  drawThickLine(165, 78, 120, 128, c);
-  drawThickLine(82, 92, 101, 92, c);
-  drawThickLine(101, 92, 109, 70, c);
-  drawThickLine(109, 70, 121, 107, c);
-  drawThickLine(121, 107, 132, 67, c);
-  drawThickLine(132, 67, 141, 92, c);
-  drawThickLine(141, 92, 161, 92, c);
-
-  drawThickLine(67, 45, 67, 92, c);
-  drawThickLine(171, 45, 171, 92, c);
-  gfx->drawCircle(68, 39, 7, c);
-  gfx->drawCircle(171, 39, 7, c);
-  gfx->fillCircle(68, 39, 3, c);
-  gfx->fillCircle(171, 39, 3, c);
-
-  for (int r = 0; r < 3; ++r) {
-    gfx->drawCircle(120, 93, 55 + r, c);
-  }
-  gfx->fillRect(60, 39, 120, 54, COLOR_SPLASH_BG);
-  drawThickLine(120, 148, 120, 166, c);
-  gfx->drawCircle(146, 166, 26, c);
-  gfx->drawCircle(146, 166, 16, c);
-  gfx->fillCircle(146, 166, 5, c);
 }
 
 static void drawCenteredText(const char *text, int y, uint8_t size, uint16_t color)
