@@ -45,6 +45,7 @@ static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
 static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 1000;
 static constexpr uint16_t WIFI_LOG_PORT = 80;
 static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
+static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
@@ -158,6 +159,21 @@ static uint32_t wifiLogStartMs = 0;
 static uint32_t wifiLogLastSampleMs = 0;
 static uint32_t wifiLogSamples = 0;
 static uint32_t wifiLogBeats = 0;
+static volatile uint32_t core0LoopCounter = 0;
+static volatile uint32_t core1LoopCounter = 0;
+static volatile uint32_t core1BusyMicros = 0;
+static uint32_t lastSystemStatusMs = 0;
+static uint32_t lastCore0LoopCounter = 0;
+static uint32_t lastCore1LoopCounter = 0;
+static uint32_t lastCore1BusyMicros = 0;
+static uint32_t core0SpeedHz = 0;
+static uint32_t core1SpeedHz = 0;
+static uint8_t core0UsagePct = 100;
+static uint8_t core1UsagePct = 0;
+static uint8_t ramUsagePct = 0;
+static uint8_t flashUsagePct = 0;
+static uint32_t freeHeapKb = 0;
+static uint32_t usedSketchKb = 0;
 static WiFiClient wifiStreamClient;
 static Preferences preferences;
 static MicSensor micSensor;
@@ -360,6 +376,81 @@ static void drawEcgDiagnosticLine()
   gfx->print(latestEcgDiagnosticFlags, HEX);
   gfx->print(" C");
   gfx->print((int)latestEcgCommonModeStep);
+}
+
+static void updateSystemStatus(uint32_t now)
+{
+  if (lastSystemStatusMs != 0 && now - lastSystemStatusMs < SYSTEM_STATUS_PERIOD_MS) {
+    return;
+  }
+
+  const uint32_t elapsedMs = (lastSystemStatusMs == 0) ? SYSTEM_STATUS_PERIOD_MS : now - lastSystemStatusMs;
+  lastSystemStatusMs = now;
+
+  const uint32_t core0Loops = core0LoopCounter;
+  const uint32_t core1Loops = core1LoopCounter;
+  const uint32_t core1Busy = core1BusyMicros;
+  const uint32_t core0Delta = core0Loops - lastCore0LoopCounter;
+  const uint32_t core1Delta = core1Loops - lastCore1LoopCounter;
+  const uint32_t core1BusyDelta = core1Busy - lastCore1BusyMicros;
+  lastCore0LoopCounter = core0Loops;
+  lastCore1LoopCounter = core1Loops;
+  lastCore1BusyMicros = core1Busy;
+
+  const uint32_t safeElapsedMs = max((uint32_t)1, elapsedMs);
+  core0SpeedHz = (core0Delta * 1000UL) / safeElapsedMs;
+  core1SpeedHz = (core1Delta * 1000UL) / safeElapsedMs;
+  core0UsagePct = core0SpeedHz > 0 ? 100 : 0;
+  core1UsagePct = constrain((core1BusyDelta / 10UL) / safeElapsedMs, 0UL, 100UL);
+
+  const uint32_t heapSize = ESP.getHeapSize();
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  freeHeapKb = freeHeap / 1024UL;
+  ramUsagePct = heapSize > 0 ? constrain(((heapSize - freeHeap) * 100UL) / heapSize, 0UL, 100UL) : 0;
+
+  const uint32_t sketchSize = ESP.getSketchSize();
+  const uint32_t sketchSpace = ESP.getFreeSketchSpace() + sketchSize;
+  usedSketchKb = sketchSize / 1024UL;
+  flashUsagePct = sketchSpace > 0 ? constrain((sketchSize * 100UL) / sketchSpace, 0UL, 100UL) : 0;
+}
+
+static void drawSystemStatusPanel()
+{
+  static constexpr int STATUS_X = 42;
+
+  gfx->setTextSize(1);
+  gfx->fillRect(STATUS_X - 2, 68, 124, 28, COLOR_BG);
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+  gfx->setCursor(STATUS_X, 70);
+  gfx->print("C0 ");
+  gfx->print(core0SpeedHz);
+  gfx->print("Hz ");
+  gfx->print(core0UsagePct);
+  gfx->print("%");
+
+  gfx->setCursor(STATUS_X, 82);
+  gfx->print("C1 ");
+  gfx->print(core1SpeedHz);
+  gfx->print("Hz ");
+  gfx->print(core1UsagePct);
+  gfx->print("%");
+
+  gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  gfx->fillRect(STATUS_X - 2, 174, 124, 28, COLOR_BG);
+  gfx->setCursor(STATUS_X, 176);
+  gfx->print("RAM ");
+  gfx->print(ramUsagePct);
+  gfx->print("% ");
+  gfx->print(freeHeapKb);
+  gfx->print("K");
+
+  gfx->setCursor(STATUS_X, 188);
+  gfx->print("MEM ");
+  gfx->print(flashUsagePct);
+  gfx->print("% ");
+  gfx->print(usedSketchKb);
+  gfx->print("K");
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
 }
 
 static void drawBandGrid(int graphCenterY, int graphHalfHeight)
@@ -1205,6 +1296,7 @@ static void drawCombinedGraph()
   drawTraceInBand(accelXHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_X);
   drawTraceInBand(accelYHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Y);
   drawTraceInBand(accelZHistory, 2.0f, ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H, COLOR_Z);
+  drawSystemStatusPanel();
 
   flushDisplay();
 }
@@ -1437,6 +1529,7 @@ static void drainAcquisitionQueues()
 static void acquisitionTask(void *)
 {
   for (;;) {
+    ++core0LoopCounter;
     readEcgSample();
     readAccelSample();
     readMicSamples();
@@ -1448,11 +1541,14 @@ static void acquisitionTask(void *)
 static void outputTask(void *)
 {
   for (;;) {
+    const uint32_t loopStartUs = micros();
     const uint32_t now = millis();
+    ++core1LoopCounter;
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
     handleWifiHttpClient(now);
     updateEcgDiagDebug(now);
+    updateSystemStatus(now);
 
     if (!otaCheckedOnce || now - lastOtaCheckMs >= 60000) {
       otaCheckedOnce = true;
@@ -1469,6 +1565,7 @@ static void outputTask(void *)
       drawCombinedGraph();
     }
 
+    core1BusyMicros += micros() - loopStartUs;
     vTaskDelay(pdMS_TO_TICKS((usbLogActive || wifiLogActive) ? 1 : 2));
   }
 }

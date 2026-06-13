@@ -146,6 +146,13 @@ The LCD status area shows the same ECG health in compact form:
 - `RLD` means the RLD stability heuristic sees sustained high common-mode and differential movement.
 - The row `P N S F C` shows positive lead-off mask, negative lead-off mask, saturation mask, diagnostic flags and common-mode step.
 
+The combined screen also shows compact system health:
+
+- `C0` - Core 0 acquisition loop speed and activity usage.
+- `C1` - Core 1 output/logging/display loop speed and measured busy usage.
+- `RAM` - heap RAM used percentage and free heap in KB.
+- `MEM` - firmware flash/sketch used percentage and sketch size in KB.
+
 ## WiFi live logging and control
 
 The dev firmware exposes local device-IP logging on port `80`.
