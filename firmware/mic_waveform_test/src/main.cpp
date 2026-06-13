@@ -45,6 +45,7 @@ static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
 static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 1000;
 static constexpr uint16_t WIFI_LOG_PORT = 80;
 static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
+static constexpr uint32_t WIFI_CONNECT_BOOT_WAIT_MS = 3000;
 static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
@@ -64,14 +65,14 @@ static constexpr size_t ACCEL_HISTORY = SCREEN_W;
 static constexpr int CENTER_X = SCREEN_W / 2;
 static constexpr int CENTER_Y = SCREEN_H / 2;
 static constexpr int SAFE_RADIUS = 102;
-static constexpr int HEADER_BOTTOM = 42;
+static constexpr int HEADER_BOTTOM = 36;
 static constexpr int WAVE_MARGIN = 12;
-static constexpr int ECG_GRAPH_CENTER_Y = 88;
-static constexpr int ECG_GRAPH_HALF_H = 34;
-static constexpr int MIC_GRAPH_CENTER_Y = 151;
-static constexpr int MIC_GRAPH_HALF_H = 24;
-static constexpr int ACCEL_GRAPH_CENTER_Y = 196;
-static constexpr int ACCEL_GRAPH_HALF_H = 18;
+static constexpr int ECG_GRAPH_CENTER_Y = 92;
+static constexpr int ECG_GRAPH_HALF_H = 44;
+static constexpr int MIC_GRAPH_CENTER_Y = 154;
+static constexpr int MIC_GRAPH_HALF_H = 18;
+static constexpr int ACCEL_GRAPH_CENTER_Y = 188;
+static constexpr int ACCEL_GRAPH_HALF_H = 15;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -293,59 +294,25 @@ static bool isDevVersion()
 static void drawBackground()
 {
   gfx->fillScreen(COLOR_BG);
-
-  for (int x = 24; x < SCREEN_W; x += 24) {
-    drawRoundVerticalGrid(x);
-  }
-
-  for (int y = CENTER_Y - 72; y <= CENTER_Y + 72; y += 24) {
-    drawRoundHorizontalGrid(y);
-  }
-
-  gfx->drawFastHLine(CENTER_X - SAFE_RADIUS + WAVE_MARGIN, CENTER_Y, (SAFE_RADIUS - WAVE_MARGIN) * 2, COLOR_DIM);
-  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->setTextSize(1);
-  const String versionText = "SW " + shortDeviceVersion();
-  const int versionX = centeredTextX(versionText, 1);
-  gfx->setCursor(versionX, 10);
-  gfx->print(versionText);
-
-  if (WiFi.status() == WL_CONNECTED) {
-    gfx->fillCircle(versionX + (versionText.length() * 6) + 8, 13, 2, COLOR_WIFI);
-  }
-
-  const String buildId = displayBuildId();
-  gfx->setTextSize(2);
-  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->setCursor(centeredTextX(buildId, 2), 22);
-  gfx->print(buildId);
-  gfx->setTextSize(1);
-
-  gfx->setCursor(58, 35);
-  gfx->setTextColor(COLOR_X, COLOR_BG);
-  gfx->print("X");
-  gfx->setTextColor(COLOR_Y, COLOR_BG);
-  gfx->print(" Y");
-  gfx->setTextColor(COLOR_Z, COLOR_BG);
-  gfx->print(" Z");
-  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->print("  ");
-  gfx->print(latestAccelX, 1);
-  gfx->print(" ");
-  gfx->print(latestAccelY, 1);
-  gfx->print(" ");
-  gfx->print(latestAccelZ, 1);
 }
 
-static void drawStatusLine()
+static void drawTopStatus()
 {
   gfx->setTextSize(1);
+  const String buildId = displayBuildId();
+
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+  gfx->setCursor(centeredTextX(buildId, 1), 12);
+  gfx->print(buildId);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    gfx->fillCircle(175, 15, 2, COLOR_WIFI);
+  }
+
   gfx->setTextColor(ecgSensor.ready() ? COLOR_WIFI : COLOR_X, COLOR_BG);
-  gfx->setCursor(42, 35);
+  gfx->setCursor(48, 25);
   gfx->print("ECG");
-  gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->print(" #");
-  gfx->print(latestEcgSequence);
+
   if (!ecgSensor.ready()) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
     gfx->print(" NOADS");
@@ -358,25 +325,25 @@ static void drawStatusLine()
   } else if (latestEcgDiagnosticFlags & ECG_DIAG_RLD_UNSTABLE) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
     gfx->print(" RLD");
+  } else {
+    gfx->setTextColor(COLOR_DIM, COLOR_BG);
+    gfx->print(" OK");
   }
-  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-}
 
-static void drawEcgDiagnosticLine()
-{
-  gfx->setTextSize(1);
-  gfx->setCursor(42, 47);
+  gfx->setCursor(124, 25);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->print("P");
-  gfx->print(latestEcgLeadOffPositive, HEX);
-  gfx->print(" N");
-  gfx->print(latestEcgLeadOffNegative, HEX);
-  gfx->print(" S");
-  gfx->print(latestEcgSaturationMask, HEX);
-  gfx->print(" F");
-  gfx->print(latestEcgDiagnosticFlags, HEX);
-  gfx->print(" C");
-  gfx->print((int)latestEcgCommonModeStep);
+  gfx->print("BPM ");
+  if (bpm > 0.0f) {
+    gfx->print((int)bpm);
+  } else {
+    gfx->print("--");
+  }
+
+  if (usbLogActive || wifiLogActive) {
+    gfx->setTextColor(COLOR_WIFI, COLOR_BG);
+    gfx->setCursor(174, 25);
+    gfx->print("LOG");
+  }
 }
 
 static void updateSystemStatus(uint32_t now)
@@ -417,38 +384,34 @@ static void updateSystemStatus(uint32_t now)
 
 static void drawSystemStatusPanel()
 {
-  static constexpr int STATUS_X = 42;
-
   gfx->setTextSize(1);
-  gfx->fillRect(STATUS_X - 2, 68, 124, 28, COLOR_BG);
-  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->setCursor(STATUS_X, 70);
+  gfx->setTextColor(COLOR_DIM, COLOR_BG);
+
+  gfx->setCursor(45, 207);
   gfx->print("C0 ");
-  gfx->print(core0SpeedHz);
-  gfx->print("Hz ");
+  gfx->print(core0SpeedHz / 1000UL);
+  gfx->print("k/");
   gfx->print(core0UsagePct);
   gfx->print("%");
 
-  gfx->setCursor(STATUS_X, 82);
+  gfx->setCursor(123, 207);
   gfx->print("C1 ");
   gfx->print(core1SpeedHz);
-  gfx->print("Hz ");
+  gfx->print("/");
   gfx->print(core1UsagePct);
   gfx->print("%");
 
-  gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->fillRect(STATUS_X - 2, 174, 124, 28, COLOR_BG);
-  gfx->setCursor(STATUS_X, 176);
+  gfx->setCursor(45, 219);
   gfx->print("RAM ");
   gfx->print(ramUsagePct);
-  gfx->print("% ");
+  gfx->print("%/");
   gfx->print(freeHeapKb);
   gfx->print("K");
 
-  gfx->setCursor(STATUS_X, 188);
+  gfx->setCursor(123, 219);
   gfx->print("MEM ");
   gfx->print(flashUsagePct);
-  gfx->print("% ");
+  gfx->print("%/");
   gfx->print(usedSketchKb);
   gfx->print("K");
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
@@ -692,6 +655,19 @@ static bool loadWifiCredentials(String &ssid, String &password)
   return ssid.length() > 0;
 }
 
+static void startWifiServerIfConnected()
+{
+  if (wifiLogServerStarted || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  DebugSerial.print("wifi connected, ip=");
+  DebugSerial.println(WiFi.localIP());
+  wifiLogServer.begin();
+  wifiLogServerStarted = true;
+  DebugSerial.printf("wifi logger ready: http://%s/\n", WiFi.localIP().toString().c_str());
+}
+
 static void connectWifi()
 {
   saveLocalWifiCredentials();
@@ -708,20 +684,15 @@ static void connectWifi()
   WiFi.begin(ssid.c_str(), password.c_str());
 
   const uint32_t startMs = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startMs < 15000) {
+  while (WiFi.status() != WL_CONNECTED && millis() - startMs < WIFI_CONNECT_BOOT_WAIT_MS) {
     delay(250);
     DebugSerial.print(".");
   }
   DebugSerial.println();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    DebugSerial.print("wifi connected, ip=");
-    DebugSerial.println(WiFi.localIP());
-    wifiLogServer.begin();
-    wifiLogServerStarted = true;
-    DebugSerial.printf("wifi logger ready: http://%s/\n", WiFi.localIP().toString().c_str());
-  } else {
-    DebugSerial.println("wifi connect failed");
+  startWifiServerIfConnected();
+  if (!wifiLogServerStarted) {
+    DebugSerial.println("wifi connect pending, UI starting");
   }
 }
 
@@ -1298,14 +1269,15 @@ static void drawAccelGraph()
 static void drawCombinedGraph()
 {
   drawBackground();
-  drawStatusLine();
-  drawEcgDiagnosticLine();
+  drawTopStatus();
   drawBandGrid(ECG_GRAPH_CENTER_Y, ECG_GRAPH_HALF_H);
   drawBandGrid(MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H);
   drawBandGrid(ACCEL_GRAPH_CENTER_Y, ACCEL_GRAPH_HALF_H);
 
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  gfx->setCursor(45, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
+  gfx->print("ECG");
   gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
   gfx->print("MIC");
   gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
@@ -1573,6 +1545,7 @@ static void outputTask(void *)
     ++core1LoopCounter;
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
+    startWifiServerIfConnected();
     handleWifiHttpClient(now);
     updateEcgDiagDebug(now);
     updateSystemStatus(now);
@@ -1587,7 +1560,8 @@ static void outputTask(void *)
     updateUsbLiveLog(now);
     updateWifiLiveLog(now);
 
-    if (!usbLogActive && !wifiLogActive && now - lastDrawMs >= 24) {
+    const uint32_t displayPeriodMs = (usbLogActive || wifiLogActive) ? 120 : 24;
+    if (now - lastDrawMs >= displayPeriodMs) {
       lastDrawMs = now;
       drawCombinedGraph();
     }

@@ -1,0 +1,23 @@
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x18 (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+device version: dev-2026.06.13.12
+connecting wifi: M3_Devices
+.....................
+wifi connected, ip=192.168.5.29
+wifi logger ready: http://192.168.5.29/
+[  6539][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+QMI8658 ready at 0x6B, accel +/-8g 1000Hz
+ADS1294 ready, id=0x90 cfg=96,C0,EC ch=00,00,00,00
+ADS1294 diag rld=1 lead_off=1 loff=00 rldp=03 rldn=03 loffp=03 loffn=03
+ECG_DIAG,ready=1,seq=0,status=000000,lop=00,lon=00,sat=00,flags=0000,common=0.0,diff=0.0,ch1=0,ch2=0,ch3=0,ch4=0
+mic accel ecg test running, acquisition core=0 output core=1
+usb live test ready: send S for 60 seconds, X to stop
+ECG_DIAG,ready=1,seq=69,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=8978.5,diff=4001.4,ch1=66493,ch2=-160424,ch3=-225694,ch4=-137662
+ECG_DIAG,ready=1,seq=141,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2816.0,diff=2352.1,ch1=65339,ch2=-157262,ch3=-230939,ch4=-136042
