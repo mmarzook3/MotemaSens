@@ -69,6 +69,13 @@ WiFi `/api/status` result also reports:
 
 This means the ECG diagnostic display/log plumbing works, but this connected hardware setup did not allow real ADS1294 lead-off/RLD/saturation testing yet. The ADS1294 SPI read returns `0xFF`, so the chip is not responding to the firmware.
 
+Display camera evidence:
+
+- `docs/firmware/debug_captures/2026-06-13/ecg_diagnostics_screen_noads.jpg`
+- `docs/firmware/debug_captures/2026-06-13/ecg_diagnostics_screen_noads_crop.jpg`
+
+The screen shows the ECG diagnostic UI and the not-ready/no-ADS state, matching the serial and WiFi results.
+
 Next live ECG check should capture:
 
 - Boot line `ADS1294 diag ...`
