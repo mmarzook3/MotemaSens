@@ -57,6 +57,8 @@ static constexpr uint32_t HEARTBEAT_LED_PWM_FREQ_HZ = 5000;
 static constexpr uint8_t HEARTBEAT_LED_PWM_BITS = 8;
 static constexpr uint8_t HEARTBEAT_LED_MIN_DUTY = 4;
 static constexpr uint8_t HEARTBEAT_LED_MAX_DUTY = 120;
+static constexpr uint32_t STARTUP_SCREEN_MS = 3000;
+static constexpr uint32_t STARTUP_FRAME_MS = 50;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
 static constexpr float HEART_NOISE_GATE = 0.025f;
@@ -88,6 +90,8 @@ static constexpr uint16_t COLOR_GRID = 0x3B6D;
 static constexpr uint16_t COLOR_WAVE = 0xDDFB;
 static constexpr uint16_t COLOR_TEXT = 0xFFFF;
 static constexpr uint16_t COLOR_DIM = 0x9D76;
+static constexpr uint16_t COLOR_SPLASH_BG = 0x6B4D;
+static constexpr uint16_t COLOR_SPLASH_YELLOW = 0xFFE0;
 static constexpr uint16_t COLOR_X = 0xF986;
 static constexpr uint16_t COLOR_Y = 0x87F0;
 static constexpr uint16_t COLOR_Z = 0x7DFF;
@@ -310,6 +314,94 @@ static bool isDevVersion()
 static void drawBackground()
 {
   gfx->fillScreen(COLOR_BG);
+}
+
+static void drawThickLine(int x0, int y0, int x1, int y1, uint16_t color)
+{
+  gfx->drawLine(x0, y0, x1, y1, color);
+  gfx->drawLine(x0 + 1, y0, x1 + 1, y1, color);
+  gfx->drawLine(x0 - 1, y0, x1 - 1, y1, color);
+  gfx->drawLine(x0, y0 + 1, x1, y1 + 1, color);
+  gfx->drawLine(x0, y0 - 1, x1, y1 - 1, color);
+}
+
+static void drawStartupIcon()
+{
+  const uint16_t c = COLOR_SPLASH_YELLOW;
+
+  for (int r = 0; r < 3; ++r) {
+    gfx->drawCircle(92, 74, 23 + r, c);
+    gfx->drawCircle(139, 74, 23 + r, c);
+  }
+  gfx->fillRect(70, 75, 92, 24, COLOR_SPLASH_BG);
+  drawThickLine(70, 78, 120, 128, c);
+  drawThickLine(165, 78, 120, 128, c);
+  drawThickLine(82, 92, 101, 92, c);
+  drawThickLine(101, 92, 109, 70, c);
+  drawThickLine(109, 70, 121, 107, c);
+  drawThickLine(121, 107, 132, 67, c);
+  drawThickLine(132, 67, 141, 92, c);
+  drawThickLine(141, 92, 161, 92, c);
+
+  drawThickLine(67, 45, 67, 92, c);
+  drawThickLine(171, 45, 171, 92, c);
+  gfx->drawCircle(68, 39, 7, c);
+  gfx->drawCircle(171, 39, 7, c);
+  gfx->fillCircle(68, 39, 3, c);
+  gfx->fillCircle(171, 39, 3, c);
+
+  for (int r = 0; r < 3; ++r) {
+    gfx->drawCircle(120, 93, 55 + r, c);
+  }
+  gfx->fillRect(60, 39, 120, 54, COLOR_SPLASH_BG);
+  drawThickLine(120, 148, 120, 166, c);
+  gfx->drawCircle(146, 166, 26, c);
+  gfx->drawCircle(146, 166, 16, c);
+  gfx->fillCircle(146, 166, 5, c);
+}
+
+static void drawCenteredText(const char *text, int y, uint8_t size, uint16_t color)
+{
+  const int width = strlen(text) * 6 * size;
+  gfx->setTextSize(size);
+  gfx->setTextColor(color, COLOR_SPLASH_BG);
+  gfx->setCursor((SCREEN_W - width) / 2, y);
+  gfx->print(text);
+}
+
+static void drawStartupScreen(uint8_t progress)
+{
+  gfx->fillScreen(COLOR_SPLASH_BG);
+  drawStartupIcon();
+  drawCenteredText("MotemaSens", 156, 3, COLOR_SPLASH_YELLOW);
+  drawCenteredText("INITIALISING", 194, 1, COLOR_TEXT);
+  drawCenteredText(DEVICE_VERSION, 207, 1, COLOR_DIM);
+
+  const int barX = 42;
+  const int barY = 222;
+  const int barW = 156;
+  const int barH = 7;
+  gfx->drawRect(barX, barY, barW, barH, COLOR_SPLASH_YELLOW);
+  const int fillW = ((barW - 2) * progress) / 100;
+  if (fillW > 0) {
+    gfx->fillRect(barX + 1, barY + 1, fillW, barH - 2, COLOR_SPLASH_YELLOW);
+  }
+  flushDisplay();
+}
+
+static void runStartupScreen()
+{
+  const uint32_t startMs = millis();
+  while (millis() - startMs < STARTUP_SCREEN_MS) {
+    const uint32_t elapsed = millis() - startMs;
+    uint32_t progress = (elapsed * 100) / STARTUP_SCREEN_MS;
+    if (progress > 100) {
+      progress = 100;
+    }
+    drawStartupScreen((uint8_t)progress);
+    vTaskDelay(pdMS_TO_TICKS(STARTUP_FRAME_MS));
+  }
+  drawStartupScreen(100);
 }
 
 static void drawTopStatus()
@@ -1652,8 +1744,7 @@ void setup()
     DebugSerial.println("LCD begin failed");
   }
 
-  drawBackground();
-  flushDisplay();
+  runStartupScreen();
   connectWifi();
   drawBackground();
   gfx->flush();
