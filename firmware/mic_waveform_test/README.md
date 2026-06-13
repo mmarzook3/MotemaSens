@@ -5,7 +5,7 @@ This is a quick test software for the custom Lobe ESP32-S3 board.
 It reads the SPH0645LM4H-B I2S mic, the Waveshare onboard QMI8658 accelerometer and the custom-board ADS1294 ECG front end.
 The round LCD currently shows raw ECG CH1 on the upper graph, mic on the middle graph and QMI8658 X/Y/Z accelerometer on the lower graph.
 
-It also connects to WiFi. Dev builds are flashed directly over USB and do not run OTA while `DEVICE_VERSION` is `local-dev`.
+It also connects to WiFi. Dev builds are flashed directly over USB and do not run OTA while `DEVICE_VERSION` is `local-dev` or starts with `dev-`.
 OTA is only for major tagged releases or manually triggered release builds.
 When WiFi is connected, dev builds expose a local HTTP logger and control page at the device IP.
 
@@ -107,6 +107,7 @@ pio device monitor
 ```
 
 Dev builds enable `ARDUINO_USB_CDC_ON_BOOT=1`, so `Serial` debug, USB live logging and ECG diagnostic lines are visible on the same USB port used for flashing.
+Every firmware change must bump `DEVICE_VERSION` in `platformio.ini`, even for local USB flashing. The round LCD shows `SW <version>` plus a large short build ID such as `V13.5` near the top of the screen so the camera can confirm the flashed build.
 
 If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.cpp` from `I2S_CHANNEL_FMT_ONLY_LEFT` to `I2S_CHANNEL_FMT_ONLY_RIGHT`.
 
@@ -229,7 +230,9 @@ Dev builds:
 
 - Build from `main`.
 - Flash directly with PlatformIO over USB.
-- Keep `DEVICE_VERSION` as `local-dev`.
+- Use a unique `DEVICE_VERSION` for every firmware change, normally `dev-YYYY.MM.DD.N`.
+- Keep dev versions as `local-dev` or `dev-*` so OTA is skipped.
+- Confirm the round LCD shows the expected `SW <version>` and large short build ID after flashing.
 - Do not run OTA from the device.
 
 Major releases:

@@ -248,10 +248,28 @@ static int centeredTextX(const String &text, int textSize)
 static String shortDeviceVersion()
 {
   String version = DEVICE_VERSION;
-  if (version.length() > 7 && version != "local-dev") {
-    version = version.substring(0, 7);
+  if (version.length() > 18) {
+    version = version.substring(0, 18);
   }
   return version;
+}
+
+static String displayBuildId()
+{
+  String version = DEVICE_VERSION;
+  if (version.startsWith("dev-2026.06.13.")) {
+    return "V13." + version.substring(15);
+  }
+  if (version.startsWith("dev-")) {
+    return "DEV";
+  }
+  return shortDeviceVersion();
+}
+
+static bool isDevVersion()
+{
+  String version = DEVICE_VERSION;
+  return version == "local-dev" || version.startsWith("dev-");
 }
 
 static void drawBackground()
@@ -278,8 +296,12 @@ static void drawBackground()
     gfx->fillCircle(versionX + (versionText.length() * 6) + 8, 13, 2, COLOR_WIFI);
   }
 
-  gfx->setCursor(91, 23);
-  gfx->print("ECG MIC ACC");
+  const String buildId = displayBuildId();
+  gfx->setTextSize(2);
+  gfx->setTextColor(COLOR_TEXT, COLOR_BG);
+  gfx->setCursor(centeredTextX(buildId, 2), 22);
+  gfx->print(buildId);
+  gfx->setTextSize(1);
 
   gfx->setCursor(58, 35);
   gfx->setTextColor(COLOR_X, COLOR_BG);
@@ -661,7 +683,7 @@ static bool downloadAndApplyFirmware(const String &firmwareUrl)
 
 static void checkForOtaUpdate()
 {
-  if (strcmp(DEVICE_VERSION, "local-dev") == 0) {
+  if (isDevVersion()) {
     return;
   }
 

@@ -191,7 +191,9 @@ All firmware changes must be committed and pushed, including dev builds flashed 
 - Keep debug evidence in git: serial CSV files, camera/display pictures, calibration summaries, plots, test plans and test-result notes should go into dated folders under `test_logs/` or `docs/firmware/`.
 - Do not publish OTA firmware for normal dev changes.
 - Publish OTA only for major release tags matching `v*.*.0-*`, or from a manual release workflow run.
-- `local-dev` firmware must not auto-update itself from OTA.
+- Every firmware change must bump `DEVICE_VERSION` in `firmware/mic_waveform_test/platformio.ini`, even for local USB flashes.
+- Dev firmware versions should use `dev-YYYY.MM.DD.N` and must not auto-update from OTA.
+- The round LCD must show `SW <version>` plus a large short build ID such as `V13.5` so camera/bench photos prove the expected firmware is running.
 
 ## Development checklist
 
