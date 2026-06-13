@@ -398,6 +398,12 @@ static void drawTopStatus()
   if (!ecgSensor.ready()) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
     gfx->print(" NOADS");
+#if ENABLE_ECG_INTERNAL_TEST_SIGNAL
+  } else {
+    gfx->setTextColor(COLOR_Y, COLOR_BG);
+    gfx->print(" TEST");
+  }
+#else
   } else if (latestEcgDiagnosticFlags & ECG_DIAG_LEAD_OFF) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
     gfx->print(" LO");
@@ -411,6 +417,7 @@ static void drawTopStatus()
     gfx->setTextColor(COLOR_DIM, COLOR_BG);
     gfx->print(" OK");
   }
+#endif
 
   gfx->setCursor(124, 25);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
@@ -1443,7 +1450,11 @@ static void pushEcgSample(const EcgSample &sample)
   latestEcgCommonModeStep = sample.commonModeStep;
   latestEcgDifferentialStep = sample.differentialStep;
 
+#if ENABLE_ECG_INTERNAL_TEST_SIGNAL
+  const float raw = (float)sample.channels[0];
+#else
   const float raw = (float)(sample.channels[0] - sample.channels[1]);
+#endif
   if (!ecgDisplayReady) {
     ecgBaseline = raw;
     ecgDisplayFiltered = 0.0f;
