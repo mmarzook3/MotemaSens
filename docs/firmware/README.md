@@ -8,8 +8,8 @@ The firmware is split into two jobs:
 
 | Job | ESP32-S3 core | What it owns | What it must not do |
 | --- | --- | --- | --- |
-| Sensor acquisition | Core 0 | ECG, mic, timestamps, sample conditioning, queues | SD writes, WiFi, USB streaming, LCD drawing, long delays |
-| Output and control | Core 1 | SD logging, USB, WiFi, BLE control, LCD, LEDs, OTA, commands | Direct sensor timing or blocking sensor reads |
+| Sensor acquisition | Core 0 | ECG, mic and accelerometer reads, minimal sample conditioning, queues | Beat detection, display shaping, SD writes, WiFi, USB streaming, LCD drawing, long delays |
+| Output and control | Core 1 | Beat detection, display shaping, SD logging, USB, WiFi, BLE control, LCD, LEDs, OTA, commands | Direct sensor timing or blocking sensor reads |
 
 The user-facing name is:
 
@@ -35,15 +35,15 @@ The current `firmware/mic_waveform_test` firmware implements the pattern with pi
 
 | Task | Core | Priority | Current purpose |
 | --- | --- | --- | --- |
-| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads ADS1294 ECG, I2S mic and QMI8658 accelerometer, filters heart-sound band, detects beat events, sends sensor data to queues |
-| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Draws combined LCD ECG/mic/accelerometer graph, handles USB logging, direct-IP WiFi logging/control, WiFi OTA for release builds, blinks GPIO14 green LED, drains acquisition queues |
+| `acquisitionTask` | `ACQUISITION_CORE` / Core 0 | High | Reads ADS1294 ECG, I2S mic and QMI8658 accelerometer, then sends sensor frames to queues |
+| `outputTask` | `OUTPUT_CORE` / Core 1 | Lower | Drains queues, detects heart-sound beats, updates display/logging state, draws combined LCD ECG/mic/accelerometer graph, handles USB logging, direct-IP WiFi logging/control, WiFi OTA for release builds, blinks GPIO14 green LED |
 
 The current queues are:
 
 | Queue | Producer | Consumer | Payload |
 | --- | --- | --- | --- |
-| `displayPointQueue` | `acquisitionTask` | `outputTask` | Signed waveform point for the LCD trace |
-| `beatEventQueue` | `acquisitionTask` | `outputTask` | Beat interval, BPM estimate, signal level and gain |
+| `micFrameQueue` | `acquisitionTask` | `outputTask` | Mic level and display points from the latest I2S frame |
+| `beatEventQueue` | `outputTask` | `outputTask` | Beat interval, BPM estimate, signal level and gain after Core 1 beat detection |
 | `accelSampleQueue` | `acquisitionTask` | `outputTask` | QMI8658 X/Y/Z acceleration in g |
 | `ecgSampleQueue` | `acquisitionTask` | `outputTask` | ADS1294 status plus raw CH1-CH4 signed 24-bit samples at the current 100 Hz dev cadence |
 
@@ -87,7 +87,7 @@ The full firmware should keep the same split.
 - Basic filtering or packet framing needed to preserve data.
 - Push packets into ring buffers or queues.
 
-The acquisition task should use short, deterministic code paths. It should not print frequently, write files, wait for network, draw to LCD or perform OTA.
+The acquisition task should use short, deterministic code paths. It should not run beat detection, print frequently, write files, wait for network, draw to LCD or perform OTA.
 
 ### Output task
 
@@ -141,7 +141,7 @@ python tools\wifi_log_capture.py --host 192.168.5.29 --duration 10 --out test_lo
 
 Direct-IP logging is best for bench testing because the PC can capture raw CSV without needing a cloud service or database. Later product firmware can add a server-backed upload path for remote patient sessions.
 
-During high-rate USB or WiFi logging the LCD graph refresh pauses. The output task gives priority to the CSV stream so the dev cadence stays close to 100 Hz.
+During high-rate USB or WiFi logging the LCD graph refresh slows down. The output task gives priority to the CSV stream so the dev cadence stays close to 100 Hz.
 
 Stop and status commands must remain available even while `/stream` is active. Do not block `/api/stop` behind the active stream, because browser downloads keep the stream connection open until the device closes it.
 

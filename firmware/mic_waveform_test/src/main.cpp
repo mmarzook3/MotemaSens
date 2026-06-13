@@ -56,7 +56,7 @@ static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
 static constexpr uint32_t OUTPUT_TASK_STACK = 12288;
-static constexpr UBaseType_t ACQUISITION_TASK_PRIORITY = 3;
+static constexpr UBaseType_t ACQUISITION_TASK_PRIORITY = 4;
 static constexpr UBaseType_t OUTPUT_TASK_PRIORITY = 1;
 
 static constexpr int SCREEN_W = 240;
@@ -170,7 +170,6 @@ static uint32_t lastCore1LoopCounter = 0;
 static uint32_t lastCore1BusyMicros = 0;
 static uint32_t core0SpeedHz = 0;
 static uint32_t core1SpeedHz = 0;
-static uint8_t core0UsagePct = 100;
 static uint8_t core1UsagePct = 0;
 static uint8_t ramUsagePct = 0;
 static uint8_t flashUsagePct = 0;
@@ -181,7 +180,7 @@ static Preferences preferences;
 static MicSensor micSensor;
 static AccelSensor accelSensor;
 static EcgAds1294 ecgSensor;
-static QueueHandle_t displayPointQueue = nullptr;
+static QueueHandle_t micFrameQueue = nullptr;
 static QueueHandle_t beatEventQueue = nullptr;
 static QueueHandle_t accelSampleQueue = nullptr;
 static QueueHandle_t ecgSampleQueue = nullptr;
@@ -368,7 +367,6 @@ static void updateSystemStatus(uint32_t now)
   const uint32_t safeElapsedMs = max((uint32_t)1, elapsedMs);
   core0SpeedHz = (core0Delta * 1000UL) / safeElapsedMs;
   core1SpeedHz = (core1Delta * 1000UL) / safeElapsedMs;
-  core0UsagePct = core0SpeedHz > 0 ? 100 : 0;
   core1UsagePct = constrain((core1BusyDelta / 10UL) / safeElapsedMs, 0UL, 100UL);
 
   const uint32_t heapSize = ESP.getHeapSize();
@@ -462,16 +460,16 @@ static void addHeartLabel()
   nextLabelIsS1 = !nextLabelIsS1;
 }
 
-static void sendDisplayPoint(float point)
+static void sendMicFrame(const MicFrame &frame)
 {
-  if (!displayPointQueue) {
+  if (!micFrameQueue) {
     return;
   }
 
-  if (xQueueSend(displayPointQueue, &point, 0) != pdTRUE) {
-    float dropped = 0.0f;
-    xQueueReceive(displayPointQueue, &dropped, 0);
-    xQueueSend(displayPointQueue, &point, 0);
+  if (xQueueSend(micFrameQueue, &frame, 0) != pdTRUE) {
+    MicFrame dropped = {};
+    xQueueReceive(micFrameQueue, &dropped, 0);
+    xQueueSend(micFrameQueue, &frame, 0);
   }
 }
 
@@ -1173,6 +1171,12 @@ static void pushAccelSample(const AccelSample &sample)
   memmove(&accelZHistory[0], &accelZHistory[1], sizeof(accelZHistory) - sizeof(accelZHistory[0]));
 
   if (sample.valid) {
+    ++accelSamplesSinceDebug;
+    latestAccelRawX = sample.rawX;
+    latestAccelRawY = sample.rawY;
+    latestAccelRawZ = sample.rawZ;
+    latestAccelDiagnosticFlags = sample.diagnosticFlags;
+
     if (haveLastAccel) {
       float delta = 0.0f;
       uint8_t healthyAxisCount = 0;
@@ -1205,6 +1209,7 @@ static void pushAccelSample(const AccelSample &sample)
     accelYHistory[ACCEL_HISTORY - 1] = constrain(sample.y, -2.0f, 2.0f);
     accelZHistory[ACCEL_HISTORY - 1] = constrain(sample.z, -2.0f, 2.0f);
   } else {
+    ++accelReadFailuresSinceDebug;
     accelXHistory[ACCEL_HISTORY - 1] = 0.0f;
     accelYHistory[ACCEL_HISTORY - 1] = 0.0f;
     accelZHistory[ACCEL_HISTORY - 1] = 0.0f;
@@ -1424,46 +1429,14 @@ static void readAccelSample()
   if (!accelSensor.poll(now, sample)) {
     return;
   }
-  if (sample.valid) {
-    ++accelSamplesSinceDebug;
-    latestAccelRawX = sample.rawX;
-    latestAccelRawY = sample.rawY;
-    latestAccelRawZ = sample.rawZ;
-    latestAccelDiagnosticFlags = sample.diagnosticFlags;
-    sendAccelSample(sample);
-  } else {
-    ++accelReadFailuresSinceDebug;
-  }
-
-  if (USB_LOG_ACCEL_DEBUG && usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
-    const float magnitude = sqrtf((sample.x * sample.x) + (sample.y * sample.y) + (sample.z * sample.z));
-    DebugSerial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f,mag=%.2f\n",
-                  (unsigned long)accelSamplesSinceDebug,
-                  (unsigned long)accelReadFailuresSinceDebug,
-                  latestAccelRawX, latestAccelRawY, latestAccelRawZ,
-                  sample.x, sample.y, sample.z, magnitude);
-    accelSamplesSinceDebug = 0;
-    accelReadFailuresSinceDebug = 0;
-    lastAccelDebugMs = now;
-  }
+  sendAccelSample(sample);
 }
 
 static void readMicSamples()
 {
   MicFrame frame = {};
-  if (!micSensor.readFrame(frame)) {
-    for (size_t i = 0; i < frame.displayPointCount; ++i) {
-      sendDisplayPoint(frame.displayPoints[i]);
-    }
-    return;
-  }
-
-  smoothedLevel = frame.normalizedLevel;
-  updateBeatDetector(smoothedLevel);
-
-  for (size_t i = 0; i < frame.displayPointCount; ++i) {
-    sendDisplayPoint(frame.displayPoints[i]);
-  }
+  micSensor.readFrame(frame);
+  sendMicFrame(frame);
 }
 
 static void updateDeviceHeartbeatLed(uint32_t now)
@@ -1479,10 +1452,17 @@ static void updateDeviceHeartbeatLed(uint32_t now)
 
 static void drainAcquisitionQueues()
 {
-  float point = 0.0f;
-  while (xQueueReceive(displayPointQueue, &point, 0) == pdTRUE) {
-    latestMicPoint = point;
-    pushWavePoint(point);
+  MicFrame micFrame = {};
+  while (xQueueReceive(micFrameQueue, &micFrame, 0) == pdTRUE) {
+    if (micFrame.valid) {
+      smoothedLevel = micFrame.normalizedLevel;
+      updateBeatDetector(smoothedLevel);
+    }
+
+    for (size_t i = 0; i < micFrame.displayPointCount; ++i) {
+      latestMicPoint = micFrame.displayPoints[i];
+      pushWavePoint(micFrame.displayPoints[i]);
+    }
   }
 
   BeatEvent event = {};
@@ -1509,6 +1489,18 @@ static void drainAcquisitionQueues()
   AccelSample sample = {};
   while (xQueueReceive(accelSampleQueue, &sample, 0) == pdTRUE) {
     pushAccelSample(sample);
+  }
+
+  const uint32_t now = millis();
+  if (USB_LOG_ACCEL_DEBUG && usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
+    DebugSerial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f\n",
+                  (unsigned long)accelSamplesSinceDebug,
+                  (unsigned long)accelReadFailuresSinceDebug,
+                  latestAccelRawX, latestAccelRawY, latestAccelRawZ,
+                  latestAccelX, latestAccelY, latestAccelZ);
+    accelSamplesSinceDebug = 0;
+    accelReadFailuresSinceDebug = 0;
+    lastAccelDebugMs = now;
   }
 
   EcgSample ecgSample = {};
@@ -1605,11 +1597,11 @@ void setup()
     point = 0.0f;
   }
 
-  displayPointQueue = xQueueCreate(96, sizeof(float));
+  micFrameQueue = xQueueCreate(32, sizeof(MicFrame));
   beatEventQueue = xQueueCreate(12, sizeof(BeatEvent));
   accelSampleQueue = xQueueCreate(64, sizeof(AccelSample));
   ecgSampleQueue = xQueueCreate(128, sizeof(EcgSample));
-  if (!displayPointQueue || !beatEventQueue || !accelSampleQueue || !ecgSampleQueue) {
+  if (!micFrameQueue || !beatEventQueue || !accelSampleQueue || !ecgSampleQueue) {
     DebugSerial.println("queue create failed");
     ESP.restart();
   }

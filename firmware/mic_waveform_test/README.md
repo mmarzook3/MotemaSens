@@ -13,13 +13,13 @@ When WiFi is connected, dev builds expose a local HTTP logger and control page a
 
 This test firmware follows the main firmware architecture in `../../docs/firmware/README.md`.
 
-- `acquisitionTask` is pinned to Core 0. It reads ECG, mic and accelerometer with short guarded sensor reads and sends queue events.
-- `outputTask` is pinned to Core 1. It owns the combined LCD ECG/mic/accelerometer graph, USB logging, WiFi OTA for release builds and GPIO14 green heartbeat LED.
+- `acquisitionTask` is pinned to Core 0. It only reads ECG, mic and accelerometer with short guarded sensor reads, then sends sensor frames to queues.
+- `outputTask` is pinned to Core 1. It owns beat detection, display shaping, the combined LCD ECG/mic/accelerometer graph, USB logging, WiFi OTA for release builds and GPIO14 green heartbeat LED.
 - Acquisition never waits for LCD, WiFi, OTA or future SD/USB/BLE output.
 
 The sensor modules are split into separate files:
 
-- `mic_sensor.*` for SPH0645 I2S mic acquisition and mic display points.
+- `mic_sensor.*` for SPH0645 I2S mic acquisition and compact mic frames.
 - `accel_sensor.*` for QMI8658 accelerometer acquisition.
 - `ecg_ads1294.*` for ADS1294 ECG SPI bring-up and raw sample frames.
 - `spi_display_guard.*` for serialising ADS1294 SPI reads and LCD flushes so the round display is not corrupted by cross-core SPI/DMA activity.
@@ -116,7 +116,7 @@ If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.
 ## USB live heart-sound test
 
 The dev firmware can stream a 60 second live test over USB serial.
-During the live USB test the LCD graph is paused so serial logging keeps a stable 10 ms / 100 Hz timing.
+During the live USB test the LCD graph refresh is slowed so serial logging keeps a stable 10 ms / 100 Hz timing.
 The blue LED stays on while the 60 second log is active.
 
 1. Flash the dev build directly over USB.
@@ -130,7 +130,7 @@ The firmware prints:
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
 - `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4 and ECG diagnostic fields.
-- `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
+- `BEAT` rows when the Core 1 heart-sound detector finds a beat. The beat timestamp is the envelope peak time after the mic frame is drained by the output task, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 
 ECG diagnostic CSV fields:
@@ -150,10 +150,10 @@ The LCD status area shows the same ECG health in compact form:
 
 The combined screen also shows compact system health:
 
-- `C0` - Core 0 acquisition loop speed and activity usage.
+- `C0` - Core 0 acquisition loop speed only. It is not shown as CPU percentage because Core 0 is reserved for sensor acquisition.
 - `C1` - Core 1 output/logging/display loop speed and measured busy usage.
-- `RAM` - heap RAM used percentage and free heap in KB.
-- `MEM` - firmware flash/sketch used percentage and sketch size in KB.
+- `R` - heap RAM used percentage.
+- `M` - firmware flash/sketch used percentage.
 
 ## WiFi live logging and control
 
@@ -202,7 +202,7 @@ The generated viewer uses separate stacked panels for mic, ECG, accelerometer an
 
 The blue LED stays on while USB or WiFi logging is active.
 
-The LCD graph refresh pauses while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
+The LCD graph refresh slows while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
 
 The stop and status endpoints remain available while `/stream` is active. The browser control page opens the CSV stream in a separate tab/download so the Stop WiFi Log button can still send `/api/stop`.
 
