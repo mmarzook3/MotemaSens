@@ -3,6 +3,8 @@
 #include <Arduino.h>
 
 struct MicFrame {
+  uint32_t timestampMs = 0;
+  uint8_t acqSeq8 = 0;
   float normalizedLevel = 0.0f;
   float displayPoints[2] = {};
   size_t displayPointCount = 0;

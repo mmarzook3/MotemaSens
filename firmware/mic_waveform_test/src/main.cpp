@@ -130,8 +130,12 @@ static uint32_t accelReadFailuresSinceDebug = 0;
 static int16_t latestAccelRawX = 0;
 static int16_t latestAccelRawY = 0;
 static int16_t latestAccelRawZ = 0;
+static uint32_t latestAccelTimestampMs = 0;
+static uint8_t latestAccelAcqSeq8 = 0;
 static uint8_t latestAccelDiagnosticFlags = 0;
 static float latestMicPoint = 0.0f;
+static uint32_t latestMicTimestampMs = 0;
+static uint8_t latestMicAcqSeq8 = 0;
 static int32_t latestEcgCh1 = 0;
 static int32_t latestEcgCh2 = 0;
 static int32_t latestEcgCh3 = 0;
@@ -144,6 +148,8 @@ static uint8_t latestEcgSaturationMask = 0;
 static uint16_t latestEcgDiagnosticFlags = 0;
 static float latestEcgCommonModeStep = 0.0f;
 static float latestEcgDifferentialStep = 0.0f;
+static uint32_t latestEcgTimestampMs = 0;
+static uint8_t latestEcgAcqSeq8 = 0;
 static float ecgBaseline = 0.0f;
 static float ecgDisplayFiltered = 0.0f;
 static float ecgDisplayNoise = 5000.0f;
@@ -162,6 +168,7 @@ static uint32_t wifiLogLastSampleMs = 0;
 static uint32_t wifiLogSamples = 0;
 static uint32_t wifiLogBeats = 0;
 static volatile uint32_t core0LoopCounter = 0;
+static uint8_t core0AcqSeq8 = 0;
 static volatile uint32_t core1LoopCounter = 0;
 static volatile uint32_t core1BusyMicros = 0;
 static uint32_t lastSystemStatusMs = 0;
@@ -343,6 +350,11 @@ static void drawTopStatus()
     gfx->setCursor(96, 25);
     gfx->print("LOG");
   }
+}
+
+static uint8_t nextAcquisitionSeq8()
+{
+  return ++core0AcqSeq8;
 }
 
 static void updateSystemStatus(uint32_t now)
@@ -584,14 +596,20 @@ static String jsonValue(const String &json, const String &key)
 
 static const char *logHeader()
 {
-  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,acc_diag_flags,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
+  return "LOG_HEADER,ms,mic_ms,mic_seq8,acc_ms,acc_seq8,ecg_ms,ecg_seq8,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,acc_diag_flags,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
 }
 
 static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 {
   return snprintf(buffer, length,
-                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%02X,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
+                  "LOG,%lu,%lu,%u,%lu,%u,%lu,%u,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%02X,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
                   (unsigned long)elapsedMs,
+                  (unsigned long)latestMicTimestampMs,
+                  (unsigned)latestMicAcqSeq8,
+                  (unsigned long)latestAccelTimestampMs,
+                  (unsigned)latestAccelAcqSeq8,
+                  (unsigned long)latestEcgTimestampMs,
+                  (unsigned)latestEcgAcqSeq8,
                   latestMicPoint,
                   smoothedLevel,
                   beatEnvelope,
@@ -1172,6 +1190,8 @@ static void pushAccelSample(const AccelSample &sample)
 
   if (sample.valid) {
     ++accelSamplesSinceDebug;
+    latestAccelTimestampMs = sample.timestampMs;
+    latestAccelAcqSeq8 = sample.acqSeq8;
     latestAccelRawX = sample.rawX;
     latestAccelRawY = sample.rawY;
     latestAccelRawZ = sample.rawZ;
@@ -1311,6 +1331,8 @@ static void pushEcgSample(const EcgSample &sample)
   }
 
   latestEcgSequence = sample.sequence;
+  latestEcgTimestampMs = sample.timestampMs;
+  latestEcgAcqSeq8 = sample.acqSeq8;
   latestEcgStatus = sample.status;
   latestEcgCh1 = sample.channels[0];
   latestEcgCh2 = sample.channels[1];
@@ -1366,6 +1388,7 @@ static void readEcgSample()
 {
   EcgSample sample = {};
   if (ecgSensor.poll(sample)) {
+    sample.acqSeq8 = nextAcquisitionSeq8();
     sendEcgSample(sample);
   }
 }
@@ -1429,6 +1452,8 @@ static void readAccelSample()
   if (!accelSensor.poll(now, sample)) {
     return;
   }
+  sample.timestampMs = now;
+  sample.acqSeq8 = nextAcquisitionSeq8();
   sendAccelSample(sample);
 }
 
@@ -1436,6 +1461,8 @@ static void readMicSamples()
 {
   MicFrame frame = {};
   micSensor.readFrame(frame);
+  frame.timestampMs = millis();
+  frame.acqSeq8 = nextAcquisitionSeq8();
   sendMicFrame(frame);
 }
 
@@ -1454,6 +1481,8 @@ static void drainAcquisitionQueues()
 {
   MicFrame micFrame = {};
   while (xQueueReceive(micFrameQueue, &micFrame, 0) == pdTRUE) {
+    latestMicTimestampMs = micFrame.timestampMs;
+    latestMicAcqSeq8 = micFrame.acqSeq8;
     if (micFrame.valid) {
       smoothedLevel = micFrame.normalizedLevel;
       updateBeatDetector(smoothedLevel);

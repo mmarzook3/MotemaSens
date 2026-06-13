@@ -72,7 +72,9 @@ ECG front-end diagnostics are also behind build switches in `sensor_config.h`:
 | `ENABLE_ECG_NOISE_DIAGNOSTICS` | On | Estimates cable/shield noise from common-mode movement |
 | `ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC` | On | Flags possible RLD loop oscillation when noise stays high |
 
-The USB and WiFi CSV schema includes `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step` and `ecg_diff_step`. Keep these fields in future logger revisions until ECG hardware validation is complete.
+The USB and WiFi CSV schema includes `mic_ms`, `mic_seq8`, `acc_ms`, `acc_seq8`, `ecg_ms`, `ecg_seq8`, `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step` and `ecg_diff_step`. Keep these fields in future logger revisions until ECG hardware validation is complete.
+
+The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 increments this counter every time it queues a sensor frame. The value wraps at `255 -> 0`. Missing or unexpected jumps show where frames were dropped or delayed. Each `*_ms` field is the Core 0 timestamp for the latest frame from that sensor.
 
 ## Future full product layout
 

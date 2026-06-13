@@ -129,11 +129,14 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4 and ECG diagnostic fields.
+- `LOG` rows every 10 ms / 100 Hz with Core 0 timestamps/counters, mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4 and ECG diagnostic fields.
 - `BEAT` rows when the Core 1 heart-sound detector finds a beat. The beat timestamp is the envelope peak time after the mic frame is drained by the output task, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 
 ECG diagnostic CSV fields:
+
+- `mic_ms`, `acc_ms` and `ecg_ms` are Core 0 timestamps for the latest mic, accelerometer and ECG frames used in that row.
+- `mic_seq8`, `acc_seq8` and `ecg_seq8` are from one shared 8-bit Core 0 acquisition counter. It increments when Core 0 queues each sensor frame and wraps at `255 -> 0`. Use jumps in these fields to find missing or delayed captured data.
 
 - `ecg_lead_off_p` and `ecg_lead_off_n` are ADS1294 lead-off masks for positive and negative inputs.
 - `ecg_sat_mask` marks raw channels close to ADC full-scale.

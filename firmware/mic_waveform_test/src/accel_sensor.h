@@ -3,6 +3,8 @@
 #include <Arduino.h>
 
 struct AccelSample {
+  uint32_t timestampMs = 0;
+  uint8_t acqSeq8 = 0;
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;

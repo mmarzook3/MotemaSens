@@ -16,6 +16,7 @@ enum EcgDiagnosticFlags : uint16_t {
 
 struct EcgSample {
   uint32_t timestampMs = 0;
+  uint8_t acqSeq8 = 0;
   uint32_t sequence = 0;
   int32_t channels[ECG_CHANNELS] = {};
   uint32_t status = 0;
