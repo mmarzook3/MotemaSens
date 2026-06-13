@@ -67,12 +67,12 @@ static constexpr int CENTER_Y = SCREEN_H / 2;
 static constexpr int SAFE_RADIUS = 102;
 static constexpr int HEADER_BOTTOM = 36;
 static constexpr int WAVE_MARGIN = 12;
-static constexpr int ECG_GRAPH_CENTER_Y = 92;
-static constexpr int ECG_GRAPH_HALF_H = 44;
-static constexpr int MIC_GRAPH_CENTER_Y = 154;
-static constexpr int MIC_GRAPH_HALF_H = 18;
-static constexpr int ACCEL_GRAPH_CENTER_Y = 188;
-static constexpr int ACCEL_GRAPH_HALF_H = 15;
+static constexpr int ECG_GRAPH_CENTER_Y = 90;
+static constexpr int ECG_GRAPH_HALF_H = 41;
+static constexpr int MIC_GRAPH_CENTER_Y = 150;
+static constexpr int MIC_GRAPH_HALF_H = 17;
+static constexpr int ACCEL_GRAPH_CENTER_Y = 181;
+static constexpr int ACCEL_GRAPH_HALF_H = 13;
 
 static constexpr uint16_t COLOR_BG = 0x2A4B;
 static constexpr uint16_t COLOR_GRID = 0x3B6D;
@@ -302,15 +302,15 @@ static void drawTopStatus()
   const String buildId = displayBuildId();
 
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
-  gfx->setCursor(centeredTextX(buildId, 1), 12);
+  gfx->setCursor(84, 12);
   gfx->print(buildId);
 
   if (WiFi.status() == WL_CONNECTED) {
-    gfx->fillCircle(175, 15, 2, COLOR_WIFI);
+    gfx->fillCircle(154, 15, 2, COLOR_WIFI);
   }
 
   gfx->setTextColor(ecgSensor.ready() ? COLOR_WIFI : COLOR_X, COLOR_BG);
-  gfx->setCursor(48, 25);
+  gfx->setCursor(44, 25);
   gfx->print("ECG");
 
   if (!ecgSensor.ready()) {
@@ -332,16 +332,16 @@ static void drawTopStatus()
 
   gfx->setCursor(124, 25);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->print("BPM ");
   if (bpm > 0.0f) {
     gfx->print((int)bpm);
+    gfx->print(" BPM");
   } else {
-    gfx->print("--");
+    gfx->print("BPM --");
   }
 
   if (usbLogActive || wifiLogActive) {
     gfx->setTextColor(COLOR_WIFI, COLOR_BG);
-    gfx->setCursor(174, 25);
+    gfx->setCursor(96, 25);
     gfx->print("LOG");
   }
 }
@@ -387,33 +387,25 @@ static void drawSystemStatusPanel()
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
 
-  gfx->setCursor(45, 207);
+  gfx->setCursor(43, 206);
   gfx->print("C0 ");
   gfx->print(core0SpeedHz / 1000UL);
-  gfx->print("k/");
-  gfx->print(core0UsagePct);
-  gfx->print("%");
+  gfx->print("k");
 
-  gfx->setCursor(123, 207);
+  gfx->setCursor(43, 218);
   gfx->print("C1 ");
   gfx->print(core1SpeedHz);
-  gfx->print("/");
-  gfx->print(core1UsagePct);
+  gfx->print("h");
+
+  gfx->setCursor(132, 206);
+  gfx->print("R ");
+  gfx->print(ramUsagePct);
   gfx->print("%");
 
-  gfx->setCursor(45, 219);
-  gfx->print("RAM ");
-  gfx->print(ramUsagePct);
-  gfx->print("%/");
-  gfx->print(freeHeapKb);
-  gfx->print("K");
-
-  gfx->setCursor(123, 219);
-  gfx->print("MEM ");
+  gfx->setCursor(132, 218);
+  gfx->print("M ");
   gfx->print(flashUsagePct);
-  gfx->print("%/");
-  gfx->print(usedSketchKb);
-  gfx->print("K");
+  gfx->print("%");
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
 }
 
@@ -422,7 +414,7 @@ static void drawBandGrid(int graphCenterY, int graphHalfHeight)
   const int top = graphCenterY - graphHalfHeight;
   const int bottom = graphCenterY + graphHalfHeight;
 
-  for (int x = 36; x < SCREEN_W - 24; x += 28) {
+  for (int x = 42; x < SCREEN_W - 36; x += 28) {
     bool drawing = false;
     int startY = top;
     for (int y = top; y <= bottom; ++y) {
@@ -1276,11 +1268,11 @@ static void drawCombinedGraph()
 
   gfx->setTextSize(1);
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
-  gfx->setCursor(45, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
+  gfx->setCursor(48, ECG_GRAPH_CENTER_Y - ECG_GRAPH_HALF_H - 10);
   gfx->print("ECG");
-  gfx->setCursor(45, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
+  gfx->setCursor(48, MIC_GRAPH_CENTER_Y - MIC_GRAPH_HALF_H - 10);
   gfx->print("MIC");
-  gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
+  gfx->setCursor(48, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
   gfx->print("ACC");
   if (latestAccelDiagnosticFlags != 0) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
