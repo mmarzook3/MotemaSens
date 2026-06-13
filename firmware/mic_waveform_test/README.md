@@ -89,8 +89,8 @@ Waveshare onboard QMI8658 accelerometer:
 
 Status LED from custom PCB:
 
-- `LED_GREEN` = GPIO14, active high, toggles every second when firmware is running.
-- `LED_BLUE` = GPIO15, active high, turns on during USB live logging and turns off when logging stops.
+- `LED_GREEN` = GPIO14, PWM heartbeat LED.
+- `LED_BLUE` = GPIO15, PWM heartbeat LED.
 
 ## Build and upload
 
@@ -119,8 +119,7 @@ If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.
 The dev firmware can stream a 60 second live test over USB serial.
 During the live USB test the LCD graph refresh is slowed so serial logging keeps a stable 10 ms / 100 Hz timing.
 The blue LED stays on while the 60 second log is active.
-When USB and WiFi logging are both stopped, a single accelerometer tap toggles the blue LED on or off. This is a dev-only tap input test and is ignored during logging.
-The green heartbeat LED on GPIO14 uses PWM breathing so the device-alive indicator is visible without the hard blink.
+The green and blue LEDs use opposite PWM breathing. As green fades up, blue fades down, then they swap. This is the device-alive heartbeat indicator and is no longer tied to accelerometer tap input or logging state.
 
 1. Flash the dev build directly over USB.
 2. Open the serial monitor at `115200`.
@@ -206,7 +205,7 @@ Or use the Windows helper from the repo root. It asks for the CSV file path and 
 
 The generated viewer uses separate stacked panels for mic, ECG, accelerometer and BPM/motion. Raw ECG channels are hidden by default so the first view is readable instead of putting every signal on one cluttered graph. The viewer also has a `Browse CSV` button, so after opening one HTML plot you can load another downloaded CSV directly from the browser.
 
-The blue LED stays on while USB or WiFi logging is active.
+The blue LED is part of the alternating heartbeat animation and is not used as the logging-active indicator in this build.
 
 The LCD graph refresh slows while high-rate USB or WiFi logging is active. This keeps the logger close to the 100 Hz dev cadence and avoids display work slowing down the CSV stream.
 

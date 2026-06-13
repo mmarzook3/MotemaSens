@@ -76,9 +76,7 @@ The USB and WiFi CSV schema includes `mic_ms`, `mic_seq8`, `acc_ms`, `acc_seq8`,
 
 The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 increments this counter every time it queues a sensor frame. The value wraps at `255 -> 0`. Missing or unexpected jumps show where frames were dropped or delayed. Each `*_ms` field is the Core 0 timestamp for the latest frame from that sensor.
 
-Accelerometer tap input is currently a dev test feature. Core 1 checks accelerometer jerk after frames are drained from the Core 0 acquisition queue. A single tap toggles the blue LED only when USB and WiFi logging are both stopped. During logging, the blue LED remains a logging-active indicator and tap input is ignored.
-
-The green device heartbeat LED on GPIO14 is driven by LEDC PWM as a breathing pulse. It is updated from Core 1 and remains separate from the Core 0 acquisition path.
+The green LED on GPIO14 and blue LED on GPIO15 are driven by LEDC PWM as an alternating breathing heartbeat. When green reaches full brightness, blue is near minimum brightness, then they swap. This is updated from Core 1 and remains separate from the Core 0 acquisition path. Accelerometer tap input has been removed from this build.
 
 The LCD boot flow starts with a MotemaSens branded startup screen and a 3 second initialising progress bar. After this splash screen, WiFi, sensors, logging control and the normal live display start. The startup icon source is tracked as `docs/firmware/assets/motemasens_logo_source.svg`; firmware uses a generated 1-bit mask header so no runtime file loading is needed.
 
@@ -188,7 +186,7 @@ If ECG and SD use the same SPI bus in a future board revision, protect bus acces
 
 ## Status LED
 
-GPIO14 / `LED_GREEN` is the device heartbeat LED. It toggles every second from the output task so there is always a quick visual sign that firmware is running.
+GPIO14 / `LED_GREEN` and GPIO15 / `LED_BLUE` are the device heartbeat LEDs. They breathe in opposite phase from the output task so there is always a quick visual sign that firmware is running.
 
 ## Build tracking rule
 
