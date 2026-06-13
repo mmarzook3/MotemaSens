@@ -11,6 +11,7 @@
 #include <math.h>
 
 #include "accel_sensor.h"
+#include "debug_serial.h"
 #include "ecg_ads1294.h"
 #include "mic_sensor.h"
 #include "sensor_config.h"
@@ -605,29 +606,29 @@ static void connectWifi()
   String ssid;
   String password;
   if (!loadWifiCredentials(ssid, password)) {
-    Serial.println("wifi not configured");
+    DebugSerial.println("wifi not configured");
     return;
   }
 
-  Serial.printf("connecting wifi: %s\n", ssid.c_str());
+  DebugSerial.printf("connecting wifi: %s\n", ssid.c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), password.c_str());
 
   const uint32_t startMs = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startMs < 15000) {
     delay(250);
-    Serial.print(".");
+    DebugSerial.print(".");
   }
-  Serial.println();
+  DebugSerial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("wifi connected, ip=");
-    Serial.println(WiFi.localIP());
+    DebugSerial.print("wifi connected, ip=");
+    DebugSerial.println(WiFi.localIP());
     wifiLogServer.begin();
     wifiLogServerStarted = true;
-    Serial.printf("wifi logger ready: http://%s/\n", WiFi.localIP().toString().c_str());
+    DebugSerial.printf("wifi logger ready: http://%s/\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("wifi connect failed");
+    DebugSerial.println("wifi connect failed");
   }
 }
 
@@ -640,27 +641,27 @@ static bool downloadAndApplyFirmware(const String &firmwareUrl)
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   if (!http.begin(client, firmwareUrl)) {
-    Serial.println("ota firmware begin failed");
+    DebugSerial.println("ota firmware begin failed");
     return false;
   }
   http.addHeader("User-Agent", "MotemaSens-ESP32S3");
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("ota firmware http code=%d\n", code);
+    DebugSerial.printf("ota firmware http code=%d\n", code);
     http.end();
     return false;
   }
 
   const int contentLength = http.getSize();
   if (contentLength <= 0) {
-    Serial.println("ota firmware size invalid");
+    DebugSerial.println("ota firmware size invalid");
     http.end();
     return false;
   }
 
   if (!Update.begin(contentLength)) {
-    Serial.println("ota update begin failed");
+    DebugSerial.println("ota update begin failed");
     http.end();
     return false;
   }
@@ -671,11 +672,11 @@ static bool downloadAndApplyFirmware(const String &firmwareUrl)
   http.end();
 
   if (!ok) {
-    Serial.printf("ota failed, written=%u expected=%d error=%d\n", (unsigned)written, contentLength, Update.getError());
+    DebugSerial.printf("ota failed, written=%u expected=%d error=%d\n", (unsigned)written, contentLength, Update.getError());
     return false;
   }
 
-  Serial.println("ota done, rebooting");
+  DebugSerial.println("ota done, rebooting");
   delay(500);
   ESP.restart();
   return true;
@@ -691,7 +692,7 @@ static void checkForOtaUpdate()
     return;
   }
 
-  Serial.println("checking ota manifest");
+  DebugSerial.println("checking ota manifest");
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -704,14 +705,14 @@ static void checkForOtaUpdate()
   manifestUrl += String(millis());
 
   if (!http.begin(client, manifestUrl)) {
-    Serial.println("ota manifest begin failed");
+    DebugSerial.println("ota manifest begin failed");
     return;
   }
   http.addHeader("User-Agent", "MotemaSens-ESP32S3");
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("ota manifest http code=%d\n", code);
+    DebugSerial.printf("ota manifest http code=%d\n", code);
     http.end();
     return;
   }
@@ -723,11 +724,11 @@ static void checkForOtaUpdate()
   const String firmwareUrl = jsonValue(manifest, "firmware_url");
 
   if (version.length() == 0 || firmwareUrl.length() == 0) {
-    Serial.println("ota manifest invalid");
+    DebugSerial.println("ota manifest invalid");
     return;
   }
 
-  Serial.printf("device=%s latest=%s\n", DEVICE_VERSION, version.c_str());
+  DebugSerial.printf("device=%s latest=%s\n", DEVICE_VERSION, version.c_str());
   if (version == DEVICE_VERSION) {
     return;
   }
@@ -760,16 +761,16 @@ static void startUsbLiveLog(uint32_t now)
   ecgScale = 3500.0f;
   ecgDisplayReady = false;
 
-  Serial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
+  DebugSerial.printf("LIVE_TEST_START,version=%s,duration_ms=%lu,sample_ms=%lu\n",
                 DEVICE_VERSION,
                 (unsigned long)USB_LOG_DURATION_MS,
                 (unsigned long)USB_LOG_PERIOD_MS);
-  Serial.println(logHeader());
+  DebugSerial.println(logHeader());
 }
 
 static void stopUsbLiveLog(uint32_t now, const char *reason)
 {
-  Serial.printf("LIVE_TEST_END,reason=%s,elapsed_ms=%lu,samples=%lu,beats=%lu,rejected=%lu,bpm=%.1f\n",
+  DebugSerial.printf("LIVE_TEST_END,reason=%s,elapsed_ms=%lu,samples=%lu,beats=%lu,rejected=%lu,bpm=%.1f\n",
                 reason,
                 (unsigned long)(now - usbLogStartMs),
                 (unsigned long)usbLogSamples,
@@ -782,8 +783,8 @@ static void stopUsbLiveLog(uint32_t now, const char *reason)
 
 static void handleUsbLogCommands(uint32_t now)
 {
-  while (Serial.available() > 0) {
-    const char command = (char)Serial.read();
+  while (DebugSerial.available() > 0) {
+    const char command = (char)DebugSerial.read();
     if ((command == 's' || command == 'S') && !usbLogActive) {
       startUsbLiveLog(now);
     } else if ((command == 'x' || command == 'X') && usbLogActive) {
@@ -815,7 +816,7 @@ static void updateUsbLiveLog(uint32_t now)
 
   char row[512] = {};
   formatLogRow(row, sizeof(row), elapsedMs);
-  Serial.print(row);
+  DebugSerial.print(row);
 }
 
 static void updateEcgDiagDebug(uint32_t now)
@@ -824,7 +825,7 @@ static void updateEcgDiagDebug(uint32_t now)
     return;
   }
   lastEcgDiagDebugMs = now;
-  Serial.printf("ECG_DIAG,ready=%u,seq=%lu,status=%06lX,lop=%02X,lon=%02X,sat=%02X,flags=%04X,common=%.1f,diff=%.1f,ch1=%ld,ch2=%ld,ch3=%ld,ch4=%ld\n",
+  DebugSerial.printf("ECG_DIAG,ready=%u,seq=%lu,status=%06lX,lop=%02X,lon=%02X,sat=%02X,flags=%04X,common=%.1f,diff=%.1f,ch1=%ld,ch2=%ld,ch3=%ld,ch4=%ld\n",
                 (unsigned)ecgSensor.ready(),
                 (unsigned long)latestEcgSequence,
                 (unsigned long)latestEcgStatus,
@@ -1027,7 +1028,7 @@ static void handleWifiHttpClient(uint32_t now)
     wifiStreamClient.println(logHeader());
     startWifiLog(now);
     wifiStreamHeaderSent = true;
-    Serial.println("wifi stream client connected");
+    DebugSerial.println("wifi stream client connected");
     return;
   }
 
@@ -1353,7 +1354,7 @@ static void readAccelSample()
 
   if (USB_LOG_ACCEL_DEBUG && usbLogActive && now - lastAccelDebugMs >= ACCEL_DEBUG_PERIOD_MS) {
     const float magnitude = sqrtf((sample.x * sample.x) + (sample.y * sample.y) + (sample.z * sample.z));
-    Serial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f,mag=%.2f\n",
+    DebugSerial.printf("ACCEL_DEBUG,hz=%lu,fail=%lu,raw=%d,%d,%d,g=%.2f,%.2f,%.2f,mag=%.2f\n",
                   (unsigned long)accelSamplesSinceDebug,
                   (unsigned long)accelReadFailuresSinceDebug,
                   latestAccelRawX, latestAccelRawY, latestAccelRawZ,
@@ -1409,7 +1410,7 @@ static void drainAcquisitionQueues()
       ++usbLogBeats;
       const uint32_t eventElapsedMs = (event.beatMs >= usbLogStartMs) ? (event.beatMs - usbLogStartMs) : 0;
       const uint32_t outputDelayMs = millis() - event.beatMs;
-      Serial.printf("BEAT,%lu,interval_ms=%lu,bpm=%.1f,level=%.4f,gain=%.1f,delay_ms=%lu\n",
+      DebugSerial.printf("BEAT,%lu,interval_ms=%lu,bpm=%.1f,level=%.4f,gain=%.1f,delay_ms=%lu\n",
                     (unsigned long)eventElapsedMs,
                     (unsigned long)event.intervalMs,
                     event.bpm,
@@ -1474,9 +1475,9 @@ static void outputTask(void *)
 
 void setup()
 {
-  Serial.begin(115200);
+  DebugSerial.begin(115200);
   delay(200);
-  Serial.printf("device version: %s\n", DEVICE_VERSION);
+  DebugSerial.printf("device version: %s\n", DEVICE_VERSION);
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
@@ -1486,7 +1487,7 @@ void setup()
   digitalWrite(LED_BLUE, LOW);
 
   if (!gfx->begin(80000000)) {
-    Serial.println("LCD begin failed");
+    DebugSerial.println("LCD begin failed");
   }
 
   drawBackground();
@@ -1519,7 +1520,7 @@ void setup()
   accelSampleQueue = xQueueCreate(64, sizeof(AccelSample));
   ecgSampleQueue = xQueueCreate(128, sizeof(EcgSample));
   if (!displayPointQueue || !beatEventQueue || !accelSampleQueue || !ecgSampleQueue) {
-    Serial.println("queue create failed");
+    DebugSerial.println("queue create failed");
     ESP.restart();
   }
 
@@ -1528,9 +1529,9 @@ void setup()
   xTaskCreatePinnedToCore(outputTask, "output", OUTPUT_TASK_STACK, nullptr,
                           OUTPUT_TASK_PRIORITY, nullptr, OUTPUT_CORE);
 
-  Serial.printf("mic accel ecg test running, acquisition core=%u output core=%u\n",
+  DebugSerial.printf("mic accel ecg test running, acquisition core=%u output core=%u\n",
                 ACQUISITION_CORE, OUTPUT_CORE);
-  Serial.println("usb live test ready: send S for 60 seconds, X to stop");
+  DebugSerial.println("usb live test ready: send S for 60 seconds, X to stop");
 }
 
 void loop()

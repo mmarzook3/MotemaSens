@@ -1,5 +1,6 @@
 #include "accel_sensor.h"
 
+#include "debug_serial.h"
 #include "sensor_config.h"
 #include <Wire.h>
 
@@ -72,7 +73,7 @@ bool AccelSensor::begin()
   }
 
   if (who != 0x05) {
-    Serial.println("QMI8658 not found");
+    DebugSerial.println("QMI8658 not found");
     ready_ = false;
     return false;
   }
@@ -87,9 +88,9 @@ bool AccelSensor::begin()
            writeRegister(0x08, 0x03);
 
   if (ready_) {
-    Serial.printf("QMI8658 ready at 0x%02X, accel +/-8g 1000Hz\n", address_);
+    DebugSerial.printf("QMI8658 ready at 0x%02X, accel +/-8g 1000Hz\n", address_);
   } else {
-    Serial.println("QMI8658 init failed");
+    DebugSerial.println("QMI8658 init failed");
   }
   return ready_;
 #endif

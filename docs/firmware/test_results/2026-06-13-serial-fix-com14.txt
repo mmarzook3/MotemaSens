@@ -1,0 +1,58 @@
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x18 (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+device version: dev-2026.06.13.6
+connecting wifi: M3_Devices
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+wifi connected, ip=192.168.5.29
+wifi logger ready: http://192.168.5.29/
+[  6542][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+QMI8658 ready at 0x6B, accel +/-8g 1000Hz
+ADS1294 ready, id=0x90 cfg=96,C0,EC ch=00,00,00,00
+ADS1294 diag rld=1 lead_off=1 loff=00 rldp=03 rldn=03 loffp=03 loffn=03
+ECG_DIAG,ready=1,seq=0,status=000000,lop=00,lon=00,sat=00,flags=0000,common=0.0,diff=0.0,ch1=0,ch2=0,ch3=0,ch4=0
+mic accel ecg test running, acquisition core=0 output core=1
+usb live test ready: send S for 60 seconds, X to stop
+ECG_DIAG,ready=1,seq=70,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=6794.2,diff=4849.1,ch1=68513,ch2=-161732,ch3=-231206,ch4=-132436
+ECG_DIAG,ready=1,seq=143,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2663.3,diff=2665.0,ch1=72328,ch2=-160022,ch3=-220612,ch4=-135322
+ECG_DIAG,ready=1,seq=216,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2238.5,diff=2595.2,ch1=64339,ch2=-164432,ch3=-236566,ch4=-134001
+ECG_DIAG,ready=1,seq=289,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2576.7,diff=2723.2,ch1=69528,ch2=-159519,ch3=-225457,ch4=-135842
+ECG_DIAG,ready=1,seq=362,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2438.5,diff=2874.2,ch1=68766,ch2=-159515,ch3=-229341,ch4=-132991
+ECG_DIAG,ready=1,seq=436,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2352.6,diff=2667.3,ch1=65821,ch2=-161808,ch3=-231924,ch4=-132637
+ECG_DIAG,ready=1,seq=509,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2487.6,diff=3283.4,ch1=70740,ch2=-159266,ch3=-227307,ch4=-135269
+ECG_DIAG,ready=1,seq=584,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2253.6,diff=2909.5,ch1=72096,ch2=-160231,ch3=-225751,ch4=-134649
+ECG_DIAG,ready=1,seq=656,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2533.9,diff=3041.1,ch1=74024,ch2=-161565,ch3=-220701,ch4=-134569
+ECG_DIAG,ready=1,seq=728,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=2067.0,diff=2105.8,ch1=71511,ch2=-164774,ch3=-224480,ch4=-135408
+ECG_DIAG,ready=1,seq=802,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=1242.5,diff=1250.9,ch1=71182,ch2=-165307,ch3=-227726,ch4=-135881
+ECG_DIAG,ready=1,seq=876,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=1171.6,diff=1400.9,ch1=72338,ch2=-165921,ch3=-231906,ch4=-136876
+ECG_DIAG,ready=1,seq=950,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=893.3,diff=1166.7,ch1=70579,ch2=-163383,ch3=-229334,ch4=-133709
+ECG_DIAG,ready=1,seq=1023,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=1068.7,diff=1385.5,ch1=71716,ch2=-164343,ch3=-225338,ch4=-135173
+ECG_DIAG,ready=1,seq=1097,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=1208.0,diff=1231.8,ch1=70338,ch2=-166676,ch3=-233138,ch4=-135218
+ECG_DIAG,ready=1,seq=1172,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=1990.1,diff=1448.9,ch1=61691,ch2=-169892,ch3=-244514,ch4=-135444
+ECG_DIAG,ready=1,seq=1242,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=3203.7,diff=3423.0,ch1=65598,ch2=-171282,ch3=-244576,ch4=-134186

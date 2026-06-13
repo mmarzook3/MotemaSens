@@ -106,7 +106,7 @@ pio run -t upload
 pio device monitor
 ```
 
-Dev builds enable `ARDUINO_USB_CDC_ON_BOOT=1`, so `Serial` debug, USB live logging and ECG diagnostic lines are visible on the same USB port used for flashing.
+Dev builds mirror debug and live-test serial traffic to both USB CDC and UART0/CH343 using `DebugSerial`, so logs and `S`/`X` commands work from the native USB port or the UART bridge used for flashing.
 Every firmware change must bump `DEVICE_VERSION` in `platformio.ini`, even for local USB flashing. The round LCD shows `SW <version>` plus a large short build ID such as `V13.5` near the top of the screen so the camera can confirm the flashed build.
 
 If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.cpp` from `I2S_CHANNEL_FMT_ONLY_LEFT` to `I2S_CHANNEL_FMT_ONLY_RIGHT`.

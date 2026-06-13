@@ -1,5 +1,6 @@
 #include "ecg_ads1294.h"
 
+#include "debug_serial.h"
 #include "sensor_config.h"
 #include "spi_display_guard.h"
 #include <SPI.h>
@@ -127,7 +128,7 @@ void EcgAds1294::begin()
 
   deviceId_ = readRegister(REG_ID);
   if (deviceId_ == 0x00 || deviceId_ == 0xFF) {
-    Serial.printf("ADS1294 not ready, id=0x%02X\n", deviceId_);
+    DebugSerial.printf("ADS1294 not ready, id=0x%02X\n", deviceId_);
     ready_ = false;
     return;
   }
@@ -143,7 +144,7 @@ void EcgAds1294::begin()
   writeRegister(REG_CH4SET, 0x00);
   configureDiagnostics();
 
-  Serial.printf("ADS1294 ready, id=0x%02X cfg=%02X,%02X,%02X ch=%02X,%02X,%02X,%02X\n",
+  DebugSerial.printf("ADS1294 ready, id=0x%02X cfg=%02X,%02X,%02X ch=%02X,%02X,%02X,%02X\n",
                 deviceId_,
                 readRegister(REG_CONFIG1),
                 readRegister(REG_CONFIG2),
@@ -152,7 +153,7 @@ void EcgAds1294::begin()
                 readRegister(REG_CH2SET),
                 readRegister(REG_CH3SET),
                 readRegister(REG_CH4SET));
-  Serial.printf("ADS1294 diag rld=%u lead_off=%u loff=%02X rldp=%02X rldn=%02X loffp=%02X loffn=%02X\n",
+  DebugSerial.printf("ADS1294 diag rld=%u lead_off=%u loff=%02X rldp=%02X rldn=%02X loffp=%02X loffn=%02X\n",
                 (unsigned)ENABLE_ECG_RLD_DRIVE,
                 (unsigned)ENABLE_ECG_LEAD_OFF_DETECTION,
                 readRegister(REG_LOFF),
@@ -346,7 +347,7 @@ bool EcgAds1294::poll(EcgSample &sample)
     lastFrameUs_ = nowUs;
     ++samples_;
     if (zeroFrames_ >= 5) {
-      Serial.printf("ECG_RECOVER,reason=zero_frame,samples=%lu\n",
+      DebugSerial.printf("ECG_RECOVER,reason=zero_frame,samples=%lu\n",
                     (unsigned long)samples_);
       startContinuousRead();
       return false;
