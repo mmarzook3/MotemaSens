@@ -50,6 +50,13 @@ static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr uint32_t TAP_REFRACTORY_MS = 450;
+static constexpr uint32_t HEARTBEAT_LED_UPDATE_MS = 20;
+static constexpr uint32_t HEARTBEAT_LED_PERIOD_MS = 1600;
+static constexpr uint8_t HEARTBEAT_LED_PWM_CHANNEL = 0;
+static constexpr uint32_t HEARTBEAT_LED_PWM_FREQ_HZ = 5000;
+static constexpr uint8_t HEARTBEAT_LED_PWM_BITS = 8;
+static constexpr uint8_t HEARTBEAT_LED_MIN_DUTY = 4;
+static constexpr uint8_t HEARTBEAT_LED_MAX_DUTY = 120;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
 static constexpr float HEART_NOISE_GATE = 0.025f;
@@ -120,8 +127,7 @@ static float beatCandidatePeakLevel = 0.0f;
 static float beatCandidatePeakGain = 0.0f;
 static uint32_t rejectedBeatCandidates = 0;
 static uint32_t lastDrawMs = 0;
-static uint32_t lastLedToggleMs = 0;
-static bool ledGreenOn = false;
+static uint32_t lastHeartbeatLedMs = 0;
 static bool blueTapLedOn = false;
 static uint32_t lastTapMs = 0;
 static uint32_t lastOtaCheckMs = 0;
@@ -1508,13 +1514,17 @@ static void readMicSamples()
 
 static void updateDeviceHeartbeatLed(uint32_t now)
 {
-  if (now - lastLedToggleMs < 1000) {
+  if (now - lastHeartbeatLedMs < HEARTBEAT_LED_UPDATE_MS) {
     return;
   }
 
-  lastLedToggleMs = now;
-  ledGreenOn = !ledGreenOn;
-  digitalWrite(LED_GREEN, ledGreenOn ? HIGH : LOW);
+  lastHeartbeatLedMs = now;
+  const uint32_t phase = now % HEARTBEAT_LED_PERIOD_MS;
+  const uint32_t halfPeriod = HEARTBEAT_LED_PERIOD_MS / 2;
+  const uint32_t ramp = (phase < halfPeriod) ? phase : (HEARTBEAT_LED_PERIOD_MS - phase);
+  const uint32_t dutyRange = HEARTBEAT_LED_MAX_DUTY - HEARTBEAT_LED_MIN_DUTY;
+  const uint8_t duty = HEARTBEAT_LED_MIN_DUTY + ((ramp * dutyRange) / halfPeriod);
+  ledcWrite(HEARTBEAT_LED_PWM_CHANNEL, duty);
 }
 
 static void drainAcquisitionQueues()
@@ -1632,9 +1642,10 @@ void setup()
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
-  pinMode(LED_GREEN, OUTPUT);
+  ledcSetup(HEARTBEAT_LED_PWM_CHANNEL, HEARTBEAT_LED_PWM_FREQ_HZ, HEARTBEAT_LED_PWM_BITS);
+  ledcAttachPin(LED_GREEN, HEARTBEAT_LED_PWM_CHANNEL);
   pinMode(LED_BLUE, OUTPUT);
-  digitalWrite(LED_GREEN, LOW);
+  ledcWrite(HEARTBEAT_LED_PWM_CHANNEL, 0);
   digitalWrite(LED_BLUE, LOW);
 
   if (!gfx->begin(80000000)) {

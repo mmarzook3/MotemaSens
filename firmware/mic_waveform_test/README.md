@@ -119,6 +119,7 @@ The dev firmware can stream a 60 second live test over USB serial.
 During the live USB test the LCD graph refresh is slowed so serial logging keeps a stable 10 ms / 100 Hz timing.
 The blue LED stays on while the 60 second log is active.
 When USB and WiFi logging are both stopped, a single accelerometer tap toggles the blue LED on or off. This is a dev-only tap input test and is ignored during logging.
+The green heartbeat LED on GPIO14 uses PWM breathing so the device-alive indicator is visible without the hard blink.
 
 1. Flash the dev build directly over USB.
 2. Open the serial monitor at `115200`.

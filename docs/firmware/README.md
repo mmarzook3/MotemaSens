@@ -78,6 +78,8 @@ The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 
 
 Accelerometer tap input is currently a dev test feature. Core 1 checks accelerometer jerk after frames are drained from the Core 0 acquisition queue. A single tap toggles the blue LED only when USB and WiFi logging are both stopped. During logging, the blue LED remains a logging-active indicator and tap input is ignored.
 
+The green device heartbeat LED on GPIO14 is driven by LEDC PWM as a breathing pulse. It is updated from Core 1 and remains separate from the Core 0 acquisition path.
+
 ## Future full product layout
 
 The full firmware should keep the same split.
