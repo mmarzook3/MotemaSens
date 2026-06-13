@@ -23,8 +23,13 @@ Show a MotemaSens startup screen with a 3 second initialising progress bar befor
 - QMI8658 accelerometer initialized successfully at `0x6B`.
 - ADS1294 initialized successfully.
 
-Camera proof was attempted during the reset/startup window, but the available camera views were not pointed at the display, so those frames were not kept in git.
+Camera proof was captured by opening the serial port to reset the ESP32 while the Windows Media Foundation camera feed recorded the display.
 
 ## Evidence
 
 - Serial proof: `docs/firmware/test_results/2026-06-13-startup-splash-v13-21-serial.txt`
+- Camera proof:
+  - `docs/firmware/debug_captures/2026-06-13/startup_splash_v13_21_msmf/frame_018.jpg`
+  - `docs/firmware/debug_captures/2026-06-13/startup_splash_v13_21_msmf/frame_045.jpg`
+  - `docs/firmware/debug_captures/2026-06-13/startup_splash_v13_21_msmf/frame_060.jpg`
+  - `docs/firmware/debug_captures/2026-06-13/startup_splash_v13_21_msmf/frame_084.jpg`
