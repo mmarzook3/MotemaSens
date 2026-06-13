@@ -78,6 +78,8 @@ The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 
 
 The green LED on GPIO14 and blue LED on GPIO15 are driven by LEDC PWM as an alternating breathing heartbeat. When green reaches full brightness, blue is near minimum brightness, then they swap. This is updated from Core 1 and remains separate from the Core 0 acquisition path. Accelerometer tap input has been removed from this build.
 
+The LCD mic trace is intentionally slowed to half visual speed by averaging pairs of mic display points before they enter the screen history. This makes the LUB-DUB heart sound easier to see while keeping Core 0 acquisition and USB/WiFi CSV logging at the normal sample cadence.
+
 The LCD boot flow starts with a MotemaSens branded startup screen and a 3 second initialising progress bar. After this splash screen, WiFi, sensors, logging control and the normal live display start. The startup icon source is tracked as `docs/firmware/assets/motemasens_logo_source.svg`; firmware uses a generated 1-bit mask header so no runtime file loading is needed.
 
 ## Future full product layout
