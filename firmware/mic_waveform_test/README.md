@@ -119,7 +119,7 @@ If the screen works but the waveform is flat, change `I2S_CHANNEL` in `src/main.
 The dev firmware can stream a 60 second live test over USB serial.
 During the live USB test the LCD graph refresh is slowed so serial logging keeps a stable 10 ms / 100 Hz timing.
 The green and blue LEDs use opposite PWM breathing. As green fades up, blue fades down, then they swap. This is the device-alive heartbeat indicator and is no longer tied to accelerometer tap input or logging state.
-The mic waveform on the LCD is display-decimated to half speed so a full LUB-DUB heart sound stays visible longer. This only changes the screen sweep speed; USB and WiFi logging keep the normal sensor cadence.
+The mic waveform on the LCD is display-decimated to quarter speed so a full LUB-DUB heart sound stays visible longer. This only changes the screen sweep speed; USB and WiFi logging keep the normal sensor cadence.
 
 1. Flash the dev build directly over USB.
 2. Open the serial monitor at `115200`.

@@ -39,7 +39,7 @@
 #endif
 
 static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 2;
-static constexpr size_t MIC_DISPLAY_SCROLL_DIVIDER = 2;
+static constexpr size_t MIC_DISPLAY_SCROLL_DIVIDER = 4;
 static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
