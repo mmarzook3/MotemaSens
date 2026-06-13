@@ -5,6 +5,9 @@
 #include <Wire.h>
 
 static constexpr uint32_t ACCEL_SAMPLE_PERIOD_MS = 8;
+static constexpr uint32_t ACCEL_RECOVERY_PERIOD_MS = 1500;
+static constexpr uint32_t ACCEL_SATURATED_RECOVERY_COUNT = 32;
+static constexpr uint8_t ACCEL_MAX_RECOVERY_ATTEMPTS = 3;
 
 static int16_t qmiInt16(uint8_t lo, uint8_t hi)
 {
@@ -54,6 +57,18 @@ bool AccelSensor::readByte(uint8_t address, uint8_t reg, uint8_t &value)
   return true;
 }
 
+bool AccelSensor::configure()
+{
+  writeRegister(0x02, 0x80);
+  delay(50);
+
+  return writeRegister(0x02, 0x60) &&
+         writeRegister(0x08, 0x00) &&
+         writeRegister(0x03, 0x23) &&
+         writeRegister(0x04, 0x43) &&
+         writeRegister(0x08, 0x03);
+}
+
 bool AccelSensor::begin()
 {
 #if !ENABLE_ACCEL_SENSOR
@@ -78,14 +93,11 @@ bool AccelSensor::begin()
     return false;
   }
 
-  writeRegister(0x02, 0x80);
-  delay(50);
-
-  ready_ = writeRegister(0x02, 0x60) &&
-           writeRegister(0x08, 0x00) &&
-           writeRegister(0x03, 0x23) &&
-           writeRegister(0x04, 0x43) &&
-           writeRegister(0x08, 0x03);
+  ready_ = configure();
+  diagnosticFlags_ = 0;
+  saturatedStreak_ = 0;
+  lastRecoveryMs_ = 0;
+  recoveryAttempts_ = 0;
 
   if (ready_) {
     DebugSerial.printf("QMI8658 ready at 0x%02X, accel +/-8g 1000Hz\n", address_);
@@ -94,6 +106,11 @@ bool AccelSensor::begin()
   }
   return ready_;
 #endif
+}
+
+static bool isSaturatedAxis(int16_t raw)
+{
+  return raw <= -32760 || raw >= 32760;
 }
 
 bool AccelSensor::readAccel(AccelSample &sample)
@@ -111,11 +128,40 @@ bool AccelSensor::readAccel(AccelSample &sample)
   sample.rawX = qmiInt16(buffer[0], buffer[1]);
   sample.rawY = qmiInt16(buffer[2], buffer[3]);
   sample.rawZ = qmiInt16(buffer[4], buffer[5]);
+  sample.xHealthy = !isSaturatedAxis(sample.rawX);
+  sample.yHealthy = !isSaturatedAxis(sample.rawY);
+  sample.zHealthy = !isSaturatedAxis(sample.rawZ);
+  sample.diagnosticFlags = 0;
+  if (!sample.xHealthy) sample.diagnosticFlags |= ACCEL_DIAG_X_SATURATED;
+  if (!sample.yHealthy) sample.diagnosticFlags |= ACCEL_DIAG_Y_SATURATED;
+  if (!sample.zHealthy) sample.diagnosticFlags |= ACCEL_DIAG_Z_SATURATED;
   sample.x = (float)sample.rawX / 4096.0f;
   sample.y = (float)sample.rawY / 4096.0f;
   sample.z = (float)sample.rawZ / 4096.0f;
+  if (!sample.xHealthy) sample.x = 0.0f;
+  if (!sample.yHealthy) sample.y = 0.0f;
+  if (!sample.zHealthy) sample.z = 0.0f;
   sample.valid = true;
   return true;
+}
+
+void AccelSensor::recover(uint32_t now)
+{
+  if (now - lastRecoveryMs_ < ACCEL_RECOVERY_PERIOD_MS) {
+    return;
+  }
+  if (recoveryAttempts_ >= ACCEL_MAX_RECOVERY_ATTEMPTS) {
+    return;
+  }
+  lastRecoveryMs_ = now;
+  ++recoveryAttempts_;
+  diagnosticFlags_ |= ACCEL_DIAG_RECOVERING;
+  ready_ = configure();
+  saturatedStreak_ = 0;
+  DebugSerial.printf("QMI8658 recover attempt=%u ready=%u flags=%02X\n",
+                     (unsigned)recoveryAttempts_,
+                     (unsigned)ready_,
+                     (unsigned)diagnosticFlags_);
 }
 
 bool AccelSensor::poll(uint32_t now, AccelSample &sample)
@@ -129,6 +175,15 @@ bool AccelSensor::poll(uint32_t now, AccelSample &sample)
   sample.valid = readAccel(sample);
   if (sample.valid) {
     ++samplesSinceDebug_;
+    diagnosticFlags_ = sample.diagnosticFlags;
+    if (sample.diagnosticFlags & (ACCEL_DIAG_X_SATURATED | ACCEL_DIAG_Y_SATURATED | ACCEL_DIAG_Z_SATURATED)) {
+      ++saturatedStreak_;
+      if (saturatedStreak_ >= ACCEL_SATURATED_RECOVERY_COUNT) {
+        recover(now);
+      }
+    } else {
+      saturatedStreak_ = 0;
+    }
   } else {
     ++failuresSinceDebug_;
   }

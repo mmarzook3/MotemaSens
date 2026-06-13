@@ -1,0 +1,37 @@
+connecting wifi: M3_Devices
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+wifi connected, ip=192.168.5.29
+wifi logger ready: http://192.168.5.29/
+[  7042][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+QMI8658 ready at 0x6B, accel +/-8g 1000Hz
+ADS1294 ready, id=0x90 cfg=96,C0,EC ch=00,00,00,00
+ADS1294 diag rld=1 lead_off=1 loff=00 rldp=03 rldn=03 loffp=03 loffn=03
+LIVE_TEST_START,version=dev-2026.06.13.9,duration_ms=60000,sample_ms=10
+LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step
+LIVE_TEST_END,reason=stopped,elapsed_ms=0,samples=0,beats=0,rejected=0,bpm=0.0
+ECG_DIAG,ready=1,seq=0,status=000000,lop=00,lon=00,sat=00,flags=0000,common=0.0,diff=0.0,ch1=0,ch2=0,ch3=0,ch4=0
+mic accel ecg test running, acquisition core=0 output core=1
+usb live test ready: send S for 60 seconds, X to stop
+ECG_DIAG,ready=1,seq=74,status=C00000,lop=00,lon=00,sat=00,flags=0030,common=5905.9,diff=4315.4,ch1=67605,ch2=-161630,ch3=-229508,ch4=-132717

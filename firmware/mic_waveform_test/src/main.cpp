@@ -129,6 +129,7 @@ static uint32_t accelReadFailuresSinceDebug = 0;
 static int16_t latestAccelRawX = 0;
 static int16_t latestAccelRawY = 0;
 static int16_t latestAccelRawZ = 0;
+static uint8_t latestAccelDiagnosticFlags = 0;
 static float latestMicPoint = 0.0f;
 static int32_t latestEcgCh1 = 0;
 static int32_t latestEcgCh2 = 0;
@@ -630,13 +631,13 @@ static String jsonValue(const String &json, const String &key)
 
 static const char *logHeader()
 {
-  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
+  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,acc_diag_flags,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
 }
 
 static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 {
   return snprintf(buffer, length,
-                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
+                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%02X,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
                   (unsigned long)elapsedMs,
                   latestMicPoint,
                   smoothedLevel,
@@ -650,6 +651,7 @@ static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
                   latestAccelRawX,
                   latestAccelRawY,
                   latestAccelRawZ,
+                  (unsigned)latestAccelDiagnosticFlags,
                   (unsigned long)latestEcgSequence,
                   (unsigned long)latestEcgStatus,
                   (long)latestEcgCh1,
@@ -1015,6 +1017,9 @@ static String wifiStatusJson()
   json += String(latestAccelY, 4);
   json += ",\"acc_z\":";
   json += String(latestAccelZ, 4);
+  json += ",\"acc_diag_flags\":\"";
+  json += String(latestAccelDiagnosticFlags, HEX);
+  json += "\"";
   json += "}";
   return json;
 }
@@ -1206,8 +1211,23 @@ static void pushAccelSample(const AccelSample &sample)
 
   if (sample.valid) {
     if (haveLastAccel) {
-      const float delta = fabsf(sample.x - lastAccelX) + fabsf(sample.y - lastAccelY) + fabsf(sample.z - lastAccelZ);
-      motionLevel = (motionLevel * 0.90f) + (delta * 0.10f);
+      float delta = 0.0f;
+      uint8_t healthyAxisCount = 0;
+      if (sample.xHealthy) {
+        delta += fabsf(sample.x - lastAccelX);
+        ++healthyAxisCount;
+      }
+      if (sample.yHealthy) {
+        delta += fabsf(sample.y - lastAccelY);
+        ++healthyAxisCount;
+      }
+      if (sample.zHealthy) {
+        delta += fabsf(sample.z - lastAccelZ);
+        ++healthyAxisCount;
+      }
+      if (healthyAxisCount > 0) {
+        motionLevel = (motionLevel * 0.90f) + ((delta / healthyAxisCount) * 0.10f);
+      }
     } else {
       haveLastAccel = true;
     }
@@ -1290,6 +1310,12 @@ static void drawCombinedGraph()
   gfx->print("MIC");
   gfx->setCursor(45, ACCEL_GRAPH_CENTER_Y - ACCEL_GRAPH_HALF_H - 10);
   gfx->print("ACC");
+  if (latestAccelDiagnosticFlags != 0) {
+    gfx->setTextColor(COLOR_X, COLOR_BG);
+    gfx->print(" F");
+    gfx->print(latestAccelDiagnosticFlags, HEX);
+    gfx->setTextColor(COLOR_DIM, COLOR_BG);
+  }
 
   drawTraceInBand(ecgWave, 1.0f, ECG_GRAPH_CENTER_Y, ECG_GRAPH_HALF_H, COLOR_WAVE);
   drawTraceInBand(wave, 1.0f, MIC_GRAPH_CENTER_Y, MIC_GRAPH_HALF_H, COLOR_Y);
@@ -1439,6 +1465,7 @@ static void readAccelSample()
     latestAccelRawX = sample.rawX;
     latestAccelRawY = sample.rawY;
     latestAccelRawZ = sample.rawZ;
+    latestAccelDiagnosticFlags = sample.diagnosticFlags;
     sendAccelSample(sample);
   } else {
     ++accelReadFailuresSinceDebug;

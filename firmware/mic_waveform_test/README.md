@@ -84,6 +84,8 @@ Waveshare onboard QMI8658 accelerometer:
 - `IMU_SDA` = GPIO6
 - `IMU_SCL` = GPIO7
 - I2C address is auto-detected at `0x6A` or `0x6B`.
+- Saturated QMI8658 axes are detected and removed from the motion gate and LCD trace instead of being treated as real movement.
+- `acc_diag_flags`: `0x01` X saturated, `0x02` Y saturated, `0x04` Z saturated, `0x08` recovery/reinitialise attempted.
 
 Status LED from custom PCB:
 
@@ -127,7 +129,7 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, latest raw ECG CH1-CH4 and ECG diagnostic fields.
+- `LOG` rows every 10 ms / 100 Hz with mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4 and ECG diagnostic fields.
 - `BEAT` rows when the heart-sound detector finds a beat. The beat timestamp is the acquisition-side envelope peak time, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 
