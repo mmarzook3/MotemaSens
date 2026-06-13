@@ -76,6 +76,8 @@ The USB and WiFi CSV schema includes `mic_ms`, `mic_seq8`, `acc_ms`, `acc_seq8`,
 
 The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 increments this counter every time it queues a sensor frame. The value wraps at `255 -> 0`. Missing or unexpected jumps show where frames were dropped or delayed. Each `*_ms` field is the Core 0 timestamp for the latest frame from that sensor.
 
+Accelerometer tap input is currently a dev test feature. Core 1 checks accelerometer jerk after frames are drained from the Core 0 acquisition queue. A single tap toggles the blue LED only when USB and WiFi logging are both stopped. During logging, the blue LED remains a logging-active indicator and tap input is ignored.
+
 ## Future full product layout
 
 The full firmware should keep the same split.

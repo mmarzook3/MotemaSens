@@ -49,9 +49,11 @@ static constexpr uint32_t WIFI_CONNECT_BOOT_WAIT_MS = 3000;
 static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
+static constexpr uint32_t TAP_REFRACTORY_MS = 450;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
 static constexpr float HEART_NOISE_GATE = 0.025f;
+static constexpr float TAP_DELTA_THRESHOLD_G = 0.95f;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -120,6 +122,8 @@ static uint32_t rejectedBeatCandidates = 0;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastLedToggleMs = 0;
 static bool ledGreenOn = false;
+static bool blueTapLedOn = false;
+static uint32_t lastTapMs = 0;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static uint32_t lastAccelReadMs = 0;
@@ -639,7 +643,35 @@ static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 
 static void updateLoggingLed()
 {
-  digitalWrite(LED_BLUE, (usbLogActive || wifiLogActive) ? HIGH : LOW);
+  digitalWrite(LED_BLUE, (usbLogActive || wifiLogActive || blueTapLedOn) ? HIGH : LOW);
+}
+
+static bool loggingActive()
+{
+  return usbLogActive || wifiLogActive;
+}
+
+static void handleAccelTap(float tapDelta, uint32_t sampleMs)
+{
+  if (loggingActive()) {
+    return;
+  }
+
+  if (sampleMs - lastTapMs < TAP_REFRACTORY_MS) {
+    return;
+  }
+
+  if (tapDelta < TAP_DELTA_THRESHOLD_G) {
+    return;
+  }
+
+  lastTapMs = sampleMs;
+  blueTapLedOn = !blueTapLedOn;
+  updateLoggingLed();
+  DebugSerial.printf("TAP,ms=%lu,delta=%.3f,blue=%u\n",
+                     (unsigned long)sampleMs,
+                     tapDelta,
+                     blueTapLedOn ? 1 : 0);
 }
 
 static void saveLocalWifiCredentials()
@@ -1199,21 +1231,29 @@ static void pushAccelSample(const AccelSample &sample)
 
     if (haveLastAccel) {
       float delta = 0.0f;
+      float tapDelta = 0.0f;
       uint8_t healthyAxisCount = 0;
       if (sample.xHealthy) {
-        delta += fabsf(sample.x - lastAccelX);
+        const float axisDelta = fabsf(sample.x - lastAccelX);
+        delta += axisDelta;
+        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (sample.yHealthy) {
-        delta += fabsf(sample.y - lastAccelY);
+        const float axisDelta = fabsf(sample.y - lastAccelY);
+        delta += axisDelta;
+        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (sample.zHealthy) {
-        delta += fabsf(sample.z - lastAccelZ);
+        const float axisDelta = fabsf(sample.z - lastAccelZ);
+        delta += axisDelta;
+        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (healthyAxisCount > 0) {
         motionLevel = (motionLevel * 0.90f) + ((delta / healthyAxisCount) * 0.10f);
+        handleAccelTap(tapDelta, sample.timestampMs);
       }
     } else {
       haveLastAccel = true;
