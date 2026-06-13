@@ -132,6 +132,12 @@ static int32_t latestEcgCh3 = 0;
 static int32_t latestEcgCh4 = 0;
 static uint32_t latestEcgStatus = 0;
 static uint32_t latestEcgSequence = 0;
+static uint8_t latestEcgLeadOffPositive = 0;
+static uint8_t latestEcgLeadOffNegative = 0;
+static uint8_t latestEcgSaturationMask = 0;
+static uint16_t latestEcgDiagnosticFlags = 0;
+static float latestEcgCommonModeStep = 0.0f;
+static float latestEcgDifferentialStep = 0.0f;
 static float ecgBaseline = 0.0f;
 static float ecgDisplayFiltered = 0.0f;
 static float ecgDisplayNoise = 5000.0f;
@@ -298,6 +304,16 @@ static void drawStatusLine()
   gfx->setTextColor(COLOR_DIM, COLOR_BG);
   gfx->print(" #");
   gfx->print(latestEcgSequence);
+  if (latestEcgDiagnosticFlags & ECG_DIAG_LEAD_OFF) {
+    gfx->setTextColor(COLOR_X, COLOR_BG);
+    gfx->print(" LO");
+  } else if (latestEcgDiagnosticFlags & ECG_DIAG_DC_SATURATION) {
+    gfx->setTextColor(COLOR_X, COLOR_BG);
+    gfx->print(" SAT");
+  } else if (latestEcgDiagnosticFlags & ECG_DIAG_RLD_UNSTABLE) {
+    gfx->setTextColor(COLOR_X, COLOR_BG);
+    gfx->print(" RLD");
+  }
   gfx->setTextColor(COLOR_TEXT, COLOR_BG);
 }
 
@@ -478,13 +494,13 @@ static String jsonValue(const String &json, const String &key)
 
 static const char *logHeader()
 {
-  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4";
+  return "LOG_HEADER,ms,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
 }
 
 static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 {
   return snprintf(buffer, length,
-                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld\n",
+                  "LOG,%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
                   (unsigned long)elapsedMs,
                   latestMicPoint,
                   smoothedLevel,
@@ -503,7 +519,13 @@ static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
                   (long)latestEcgCh1,
                   (long)latestEcgCh2,
                   (long)latestEcgCh3,
-                  (long)latestEcgCh4);
+                  (long)latestEcgCh4,
+                  (unsigned)latestEcgLeadOffPositive,
+                  (unsigned)latestEcgLeadOffNegative,
+                  (unsigned)latestEcgSaturationMask,
+                  (unsigned)latestEcgDiagnosticFlags,
+                  latestEcgCommonModeStep,
+                  latestEcgDifferentialStep);
 }
 
 static void updateLoggingLed()
@@ -747,7 +769,7 @@ static void updateUsbLiveLog(uint32_t now)
   }
   ++usbLogSamples;
 
-  char row[256] = {};
+  char row[512] = {};
   formatLogRow(row, sizeof(row), elapsedMs);
   Serial.print(row);
 }
@@ -815,6 +837,18 @@ static String wifiStatusJson()
   json += String(latestEcgSequence);
   json += ",\"ecg_ready\":";
   json += ecgSensor.ready() ? "true" : "false";
+  json += ",\"ecg_lead_off_p\":\"";
+  json += String(latestEcgLeadOffPositive, HEX);
+  json += "\",\"ecg_lead_off_n\":\"";
+  json += String(latestEcgLeadOffNegative, HEX);
+  json += "\",\"ecg_sat_mask\":\"";
+  json += String(latestEcgSaturationMask, HEX);
+  json += "\",\"ecg_diag_flags\":\"";
+  json += String(latestEcgDiagnosticFlags, HEX);
+  json += "\",\"ecg_common_step\":";
+  json += String(latestEcgCommonModeStep, 1);
+  json += ",\"ecg_diff_step\":";
+  json += String(latestEcgDifferentialStep, 1);
   json += ",\"mic_level\":";
   json += String(smoothedLevel, 4);
   json += ",\"acc_x\":";
@@ -974,7 +1008,7 @@ static void updateWifiLiveLog(uint32_t now)
     wifiStreamHeaderSent = true;
   }
 
-  char row[256] = {};
+  char row[512] = {};
   const uint32_t elapsedMs = now - wifiLogStartMs;
   formatLogRow(row, sizeof(row), elapsedMs);
   wifiStreamClient.print(row);
@@ -1129,6 +1163,12 @@ static void pushEcgSample(const EcgSample &sample)
   latestEcgCh2 = sample.channels[1];
   latestEcgCh3 = sample.channels[2];
   latestEcgCh4 = sample.channels[3];
+  latestEcgLeadOffPositive = sample.leadOffPositive;
+  latestEcgLeadOffNegative = sample.leadOffNegative;
+  latestEcgSaturationMask = sample.saturationMask;
+  latestEcgDiagnosticFlags = sample.diagnosticFlags;
+  latestEcgCommonModeStep = sample.commonModeStep;
+  latestEcgDifferentialStep = sample.differentialStep;
 
   const float raw = (float)(sample.channels[0] - sample.channels[1]);
   if (!ecgDisplayReady) {

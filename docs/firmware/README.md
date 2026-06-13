@@ -62,6 +62,18 @@ Each sensor can be disabled at build time with `ENABLE_MIC_SENSOR`, `ENABLE_ACCE
 The current ECG dev build uses ADS1294 `RDATA` reads every 10 ms so the LCD and USB log stay close to the 100 Hz dev cadence without depending on a narrow DRDY pulse. If repeated all-zero frames are read, the driver restarts conversions so the display does not remain frozen. The final logger should move ECG to an interrupt or DMA-style path before increasing the ECG sample rate.
 LCD flushes and ADS1294 SPI reads are protected with a shared guard. Keep this in place while display and ECG run on different cores, because overlapping SPI/DMA activity can corrupt the round LCD image.
 
+ECG front-end diagnostics are also behind build switches in `sensor_config.h`:
+
+| Switch | Default | Purpose |
+| --- | --- | --- |
+| `ENABLE_ECG_RLD_DRIVE` | On | Configures ADS1294 internal RLD/bias drive for the active ECG inputs |
+| `ENABLE_ECG_LEAD_OFF_DETECTION` | On | Enables ADS1294 lead-off sense on the active ECG inputs |
+| `ENABLE_ECG_DC_SATURATION_DIAGNOSTIC` | On | Flags raw channels close to the ADC rails |
+| `ENABLE_ECG_NOISE_DIAGNOSTICS` | On | Estimates cable/shield noise from common-mode movement |
+| `ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC` | On | Flags possible RLD loop oscillation when noise stays high |
+
+The USB and WiFi CSV schema includes `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step` and `ecg_diff_step`. Keep these fields in future logger revisions until ECG hardware validation is complete.
+
 ## Future full product layout
 
 The full firmware should keep the same split.

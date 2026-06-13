@@ -14,6 +14,26 @@
 #define ENABLE_ECG_SENSOR 1
 #endif
 
+#ifndef ENABLE_ECG_RLD_DRIVE
+#define ENABLE_ECG_RLD_DRIVE 1
+#endif
+
+#ifndef ENABLE_ECG_LEAD_OFF_DETECTION
+#define ENABLE_ECG_LEAD_OFF_DETECTION 1
+#endif
+
+#ifndef ENABLE_ECG_DC_SATURATION_DIAGNOSTIC
+#define ENABLE_ECG_DC_SATURATION_DIAGNOSTIC 1
+#endif
+
+#ifndef ENABLE_ECG_NOISE_DIAGNOSTICS
+#define ENABLE_ECG_NOISE_DIAGNOSTICS 1
+#endif
+
+#ifndef ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC
+#define ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC 1
+#endif
+
 // Waveshare ESP32-S3-LCD-1.28 display pins.
 static constexpr int LCD_DC = 8;
 static constexpr int LCD_CS = 9;
