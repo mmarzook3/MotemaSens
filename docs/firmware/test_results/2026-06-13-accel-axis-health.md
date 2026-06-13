@@ -79,3 +79,20 @@ Final parsed result from `2026-06-13-accel-v13-11-live-com14.csv`:
 The software side is now protected from the failed X axis, and the problem is clearly reported in logs and on screen as `ACC F1`.
 
 For real 3-axis accelerometer operation, this board/module still needs a hardware fix or another QMI8658 module, because the X axis stayed saturated after firmware reinitialisation.
+
+## Follow-up check
+
+After the next board check, the accelerometer reported healthy values again.
+
+Follow-up serial log: `docs/firmware/test_results/2026-06-13-accel-check-now-com14.csv`
+
+Parsed result:
+
+- Firmware: `dev-2026.06.13.11`
+- CSV rows parsed: `521`
+- `raw_x` min/max: `689 / 1018`
+- `raw_y` min/max: `-108 / 32`
+- `raw_z` min/max: `-3785 / -3621`
+- `acc_diag_flags`: `00`
+
+This means X is no longer stuck at `-32768` in this latest test. The firmware diagnostic is still useful, because if the QMI8658 saturates again it will show immediately in the display and logs.
