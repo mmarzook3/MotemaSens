@@ -50,10 +50,10 @@ static constexpr uint32_t WIFI_CONNECT_BOOT_WAIT_MS = 3000;
 static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
-static constexpr uint32_t TAP_REFRACTORY_MS = 450;
 static constexpr uint32_t HEARTBEAT_LED_UPDATE_MS = 20;
 static constexpr uint32_t HEARTBEAT_LED_PERIOD_MS = 1600;
-static constexpr uint8_t HEARTBEAT_LED_PWM_CHANNEL = 0;
+static constexpr uint8_t HEARTBEAT_GREEN_PWM_CHANNEL = 0;
+static constexpr uint8_t HEARTBEAT_BLUE_PWM_CHANNEL = 1;
 static constexpr uint32_t HEARTBEAT_LED_PWM_FREQ_HZ = 5000;
 static constexpr uint8_t HEARTBEAT_LED_PWM_BITS = 8;
 static constexpr uint8_t HEARTBEAT_LED_MIN_DUTY = 4;
@@ -63,7 +63,6 @@ static constexpr uint32_t STARTUP_FRAME_MS = 50;
 static constexpr bool USB_LOG_ACCEL_DEBUG = false;
 static constexpr float MOTION_GATE_THRESHOLD_G = 0.075f;
 static constexpr float HEART_NOISE_GATE = 0.025f;
-static constexpr float TAP_DELTA_THRESHOLD_G = 0.95f;
 static constexpr uint8_t ACQUISITION_CORE = 0;
 static constexpr uint8_t OUTPUT_CORE = 1;
 static constexpr uint32_t ACQUISITION_TASK_STACK = 8192;
@@ -133,8 +132,6 @@ static float beatCandidatePeakGain = 0.0f;
 static uint32_t rejectedBeatCandidates = 0;
 static uint32_t lastDrawMs = 0;
 static uint32_t lastHeartbeatLedMs = 0;
-static bool blueTapLedOn = false;
-static uint32_t lastTapMs = 0;
 static uint32_t lastOtaCheckMs = 0;
 static bool otaCheckedOnce = false;
 static uint32_t lastAccelReadMs = 0;
@@ -715,35 +712,12 @@ static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 
 static void updateLoggingLed()
 {
-  digitalWrite(LED_BLUE, (usbLogActive || wifiLogActive || blueTapLedOn) ? HIGH : LOW);
+  // Blue LED is now part of the always-on alternating heartbeat animation.
 }
 
 static bool loggingActive()
 {
   return usbLogActive || wifiLogActive;
-}
-
-static void handleAccelTap(float tapDelta, uint32_t sampleMs)
-{
-  if (loggingActive()) {
-    return;
-  }
-
-  if (sampleMs - lastTapMs < TAP_REFRACTORY_MS) {
-    return;
-  }
-
-  if (tapDelta < TAP_DELTA_THRESHOLD_G) {
-    return;
-  }
-
-  lastTapMs = sampleMs;
-  blueTapLedOn = !blueTapLedOn;
-  updateLoggingLed();
-  DebugSerial.printf("TAP,ms=%lu,delta=%.3f,blue=%u\n",
-                     (unsigned long)sampleMs,
-                     tapDelta,
-                     blueTapLedOn ? 1 : 0);
 }
 
 static void saveLocalWifiCredentials()
@@ -1303,29 +1277,24 @@ static void pushAccelSample(const AccelSample &sample)
 
     if (haveLastAccel) {
       float delta = 0.0f;
-      float tapDelta = 0.0f;
       uint8_t healthyAxisCount = 0;
       if (sample.xHealthy) {
         const float axisDelta = fabsf(sample.x - lastAccelX);
         delta += axisDelta;
-        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (sample.yHealthy) {
         const float axisDelta = fabsf(sample.y - lastAccelY);
         delta += axisDelta;
-        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (sample.zHealthy) {
         const float axisDelta = fabsf(sample.z - lastAccelZ);
         delta += axisDelta;
-        tapDelta += axisDelta;
         ++healthyAxisCount;
       }
       if (healthyAxisCount > 0) {
         motionLevel = (motionLevel * 0.90f) + ((delta / healthyAxisCount) * 0.10f);
-        handleAccelTap(tapDelta, sample.timestampMs);
       }
     } else {
       haveLastAccel = true;
@@ -1589,8 +1558,10 @@ static void updateDeviceHeartbeatLed(uint32_t now)
   const uint32_t halfPeriod = HEARTBEAT_LED_PERIOD_MS / 2;
   const uint32_t ramp = (phase < halfPeriod) ? phase : (HEARTBEAT_LED_PERIOD_MS - phase);
   const uint32_t dutyRange = HEARTBEAT_LED_MAX_DUTY - HEARTBEAT_LED_MIN_DUTY;
-  const uint8_t duty = HEARTBEAT_LED_MIN_DUTY + ((ramp * dutyRange) / halfPeriod);
-  ledcWrite(HEARTBEAT_LED_PWM_CHANNEL, duty);
+  const uint8_t greenDuty = HEARTBEAT_LED_MIN_DUTY + ((ramp * dutyRange) / halfPeriod);
+  const uint8_t blueDuty = HEARTBEAT_LED_MIN_DUTY + (((halfPeriod - ramp) * dutyRange) / halfPeriod);
+  ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, greenDuty);
+  ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, blueDuty);
 }
 
 static void drainAcquisitionQueues()
@@ -1708,11 +1679,12 @@ void setup()
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
-  ledcSetup(HEARTBEAT_LED_PWM_CHANNEL, HEARTBEAT_LED_PWM_FREQ_HZ, HEARTBEAT_LED_PWM_BITS);
-  ledcAttachPin(LED_GREEN, HEARTBEAT_LED_PWM_CHANNEL);
-  pinMode(LED_BLUE, OUTPUT);
-  ledcWrite(HEARTBEAT_LED_PWM_CHANNEL, 0);
-  digitalWrite(LED_BLUE, LOW);
+  ledcSetup(HEARTBEAT_GREEN_PWM_CHANNEL, HEARTBEAT_LED_PWM_FREQ_HZ, HEARTBEAT_LED_PWM_BITS);
+  ledcSetup(HEARTBEAT_BLUE_PWM_CHANNEL, HEARTBEAT_LED_PWM_FREQ_HZ, HEARTBEAT_LED_PWM_BITS);
+  ledcAttachPin(LED_GREEN, HEARTBEAT_GREEN_PWM_CHANNEL);
+  ledcAttachPin(LED_BLUE, HEARTBEAT_BLUE_PWM_CHANNEL);
+  ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, 0);
+  ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, 0);
 
   if (!gfx->begin(80000000)) {
     DebugSerial.println("LCD begin failed");
