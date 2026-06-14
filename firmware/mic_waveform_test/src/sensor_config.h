@@ -14,6 +14,10 @@
 #define ENABLE_ECG_SENSOR 1
 #endif
 
+#ifndef ECG_ELECTRODE_COUNT
+#define ECG_ELECTRODE_COUNT 4
+#endif
+
 #ifndef ENABLE_ECG_RLD_DRIVE
 #define ENABLE_ECG_RLD_DRIVE 1
 #endif

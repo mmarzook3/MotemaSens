@@ -33,6 +33,9 @@ static constexpr uint8_t REG_LOFF_STATN = 0x13;
 static constexpr uint32_t ECG_FRAME_PERIOD_US = 10000;
 static constexpr uint32_t ECG_RECOVERY_PERIOD_MS = 1000;
 static constexpr uint8_t ECG_ACTIVE_ELECTRODE_MASK = 0x03;
+static constexpr size_t ECG_DIAG_CHANNEL_COUNT = (ECG_ELECTRODE_COUNT == 3) ? 2 : ECG_CHANNELS;
+static constexpr uint8_t ECG_CH_NORMAL_ELECTRODE = 0x00;
+static constexpr uint8_t ECG_CH_POWERDOWN_SHORTED = 0x81;
 static constexpr int32_t ECG_ADC_SATURATION_LIMIT = 7600000;
 static constexpr float ECG_CABLE_NOISE_STEP_LIMIT = 60000.0f;
 static constexpr float ECG_RLD_UNSTABLE_STEP_LIMIT = 90000.0f;
@@ -133,19 +136,26 @@ void EcgAds1294::begin()
     return;
   }
 
-  // Conservative bring-up setup: internal reference on, 250 SPS class data rate,
-  // normal electrode input on all four channels with gain 6.
+  // Conservative bring-up setup: internal reference on, 250 SPS class data rate.
   writeRegister(REG_CONFIG1, 0x96);
   writeRegister(REG_CONFIG2, 0xC0);
   writeRegister(REG_CONFIG3, 0xE0);
-  writeRegister(REG_CH1SET, 0x00);
-  writeRegister(REG_CH2SET, 0x00);
-  writeRegister(REG_CH3SET, 0x00);
-  writeRegister(REG_CH4SET, 0x00);
+#if ECG_ELECTRODE_COUNT == 3
+  writeRegister(REG_CH1SET, ECG_CH_NORMAL_ELECTRODE);   // Lead I: LA - RA
+  writeRegister(REG_CH2SET, ECG_CH_NORMAL_ELECTRODE);   // Lead II: LL - RA
+  writeRegister(REG_CH3SET, ECG_CH_POWERDOWN_SHORTED);
+  writeRegister(REG_CH4SET, ECG_CH_POWERDOWN_SHORTED);
+#else
+  writeRegister(REG_CH1SET, ECG_CH_NORMAL_ELECTRODE);
+  writeRegister(REG_CH2SET, ECG_CH_NORMAL_ELECTRODE);
+  writeRegister(REG_CH3SET, ECG_CH_NORMAL_ELECTRODE);
+  writeRegister(REG_CH4SET, ECG_CH_NORMAL_ELECTRODE);
+#endif
   configureDiagnostics();
 
-  DebugSerial.printf("ADS1294 ready, id=0x%02X cfg=%02X,%02X,%02X ch=%02X,%02X,%02X,%02X\n",
+  DebugSerial.printf("ADS1294 ready, id=0x%02X electrodes=%u cfg=%02X,%02X,%02X ch=%02X,%02X,%02X,%02X\n",
                 deviceId_,
+                (unsigned)ECG_ELECTRODE_COUNT,
                 readRegister(REG_CONFIG1),
                 readRegister(REG_CONFIG2),
                 readRegister(REG_CONFIG3),
@@ -168,7 +178,7 @@ void EcgAds1294::begin()
 
 void EcgAds1294::configureDiagnostics()
 {
-#if ENABLE_ECG_RLD_DRIVE
+#if ENABLE_ECG_RLD_DRIVE && ECG_ELECTRODE_COUNT != 3
   writeRegister(REG_CONFIG3, readRegister(REG_CONFIG3) | 0x0C);
   writeRegister(REG_RLD_SENSP, ECG_ACTIVE_ELECTRODE_MASK);
   writeRegister(REG_RLD_SENSN, ECG_ACTIVE_ELECTRODE_MASK);
@@ -222,7 +232,7 @@ void EcgAds1294::updateSampleDiagnostics(EcgSample &sample)
 #endif
 
 #if ENABLE_ECG_DC_SATURATION_DIAGNOSTIC
-  for (size_t channel = 0; channel < ECG_CHANNELS; ++channel) {
+  for (size_t channel = 0; channel < ECG_DIAG_CHANNEL_COUNT; ++channel) {
     if (abs(sample.channels[channel]) >= ECG_ADC_SATURATION_LIMIT) {
       sample.saturationMask |= (1U << channel);
     }

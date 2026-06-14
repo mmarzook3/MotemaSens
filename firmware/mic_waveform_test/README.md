@@ -71,11 +71,15 @@ The USB log keeps raw ECG CH1-CH4 values, while the LCD ECG trace uses display-o
 
 The ADS1294 dev driver also has configurable front-end diagnostics:
 
-- RLD drive is enabled by default for CH1 and CH2 positive/negative inputs.
+- This `ecg-3-electrode` branch is configured for 3 electrodes only: RA, LA and LL. It does not drive or require RL/RLD.
+- CH1 is Lead I (`LA - RA`), CH2 is Lead II (`LL - RA`), and firmware derives Lead III as `Lead II - Lead I`.
+- The LCD status shows `ECG3L` so the flashed electrode mode is visible.
+- The LCD ECG trace shows Lead II by default.
+- RLD drive is disabled on this branch.
 - Lead-off detection is enabled by default for CH1 and CH2 positive/negative inputs.
 - DC saturation is flagged when any raw channel approaches the ADC rails.
 - Cable/noise behaviour is estimated from CH1/CH2 common-mode step size.
-- Possible RLD instability is flagged when common-mode and differential steps stay high together.
+- RLD instability detection is disabled on this branch because there is no RL/RLD electrode.
 
 These are development diagnostics only. They confirm whether the firmware is configuring and observing the ADS1294 front end, but they do not replace final IEC/medical safety validation.
 
@@ -131,7 +135,7 @@ The firmware prints:
 
 - `LIVE_TEST_START` when capture starts.
 - `LOG_HEADER` with CSV column names.
-- `LOG` rows every 10 ms / 100 Hz with Core 0 timestamps/counters, mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4 and ECG diagnostic fields.
+- `LOG` rows every 10 ms / 100 Hz with Core 0 timestamps/counters, mic trace, mic level, beat envelope, beat threshold, motion level, BPM, accelerometer X/Y/Z, accelerometer diagnostic flags, latest raw ECG CH1-CH4, derived ECG Lead I/II/III and ECG diagnostic fields.
 - `BEAT` rows when the Core 1 heart-sound detector finds a beat. The beat timestamp is the envelope peak time after the mic frame is drained by the output task, and `delay_ms` shows how long it took before the output task printed the event.
 - `LIVE_TEST_END` after 60 seconds or if `X` is sent. It includes the counted beats and rejected beat candidates.
 

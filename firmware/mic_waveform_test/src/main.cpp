@@ -396,6 +396,8 @@ static void drawTopStatus()
   gfx->setTextColor(ecgSensor.ready() ? COLOR_WIFI : COLOR_X, COLOR_BG);
   gfx->setCursor(44, 25);
   gfx->print("ECG");
+  gfx->print(ECG_ELECTRODE_COUNT);
+  gfx->print("L");
 
   if (!ecgSensor.ready()) {
     gfx->setTextColor(COLOR_X, COLOR_BG);
@@ -672,13 +674,13 @@ static String jsonValue(const String &json, const String &key)
 
 static const char *logHeader()
 {
-  return "LOG_HEADER,ms,mic_ms,mic_seq8,acc_ms,acc_seq8,ecg_ms,ecg_seq8,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,acc_diag_flags,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
+  return "LOG_HEADER,ms,mic_ms,mic_seq8,acc_ms,acc_seq8,ecg_ms,ecg_seq8,mic_trace,mic_level,beat_envelope,beat_threshold,motion_level,bpm,acc_x_g,acc_y_g,acc_z_g,raw_x,raw_y,raw_z,acc_diag_flags,ecg_seq,ecg_status,ecg_ch1,ecg_ch2,ecg_ch3,ecg_ch4,ecg_lead_i,ecg_lead_ii,ecg_lead_iii,ecg_lead_off_p,ecg_lead_off_n,ecg_sat_mask,ecg_diag_flags,ecg_common_step,ecg_diff_step";
 }
 
 static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
 {
   return snprintf(buffer, length,
-                  "LOG,%lu,%lu,%u,%lu,%u,%lu,%u,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%02X,%lu,%06lX,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
+                  "LOG,%lu,%lu,%u,%lu,%u,%lu,%u,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.4f,%.4f,%.4f,%d,%d,%d,%02X,%lu,%06lX,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%02X,%02X,%02X,%04X,%.1f,%.1f\n",
                   (unsigned long)elapsedMs,
                   (unsigned long)latestMicTimestampMs,
                   (unsigned)latestMicAcqSeq8,
@@ -705,6 +707,9 @@ static int formatLogRow(char *buffer, size_t length, uint32_t elapsedMs)
                   (long)latestEcgCh2,
                   (long)latestEcgCh3,
                   (long)latestEcgCh4,
+                  (long)latestEcgCh1,
+                  (long)latestEcgCh2,
+                  (long)(latestEcgCh2 - latestEcgCh1),
                   (unsigned)latestEcgLeadOffPositive,
                   (unsigned)latestEcgLeadOffNegative,
                   (unsigned)latestEcgSaturationMask,
@@ -1448,7 +1453,11 @@ static void pushEcgSample(const EcgSample &sample)
   latestEcgCommonModeStep = sample.commonModeStep;
   latestEcgDifferentialStep = sample.differentialStep;
 
+#if ECG_ELECTRODE_COUNT == 3
+  const float raw = (float)sample.channels[1]; // Lead II: LL - RA
+#else
   const float raw = (float)(sample.channels[0] - sample.channels[1]);
+#endif
   if (!ecgDisplayReady) {
     ecgBaseline = raw;
     ecgDisplayFiltered = 0.0f;

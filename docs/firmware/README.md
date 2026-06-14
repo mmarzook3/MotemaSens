@@ -62,6 +62,8 @@ Each sensor can be disabled at build time with `ENABLE_MIC_SENSOR`, `ENABLE_ACCE
 The current ECG dev build uses ADS1294 `RDATA` reads every 10 ms so the LCD and USB log stay close to the 100 Hz dev cadence without depending on a narrow DRDY pulse. If repeated all-zero frames are read, the driver restarts conversions so the display does not remain frozen. The final logger should move ECG to an interrupt or DMA-style path before increasing the ECG sample rate.
 LCD flushes and ADS1294 SPI reads are protected with a shared guard. Keep this in place while display and ECG run on different cores, because overlapping SPI/DMA activity can corrupt the round LCD image.
 
+On the `ecg-3-electrode` branch, firmware is configured for RA, LA and LL only. `ECG_ELECTRODE_COUNT` is `3`, RLD drive is disabled, CH3/CH4 are powered down/shorted, the LCD status shows `ECG3L`, the LCD ECG trace uses Lead II (`LL - RA`), and the CSV adds derived `ecg_lead_i`, `ecg_lead_ii` and `ecg_lead_iii`.
+
 ECG front-end diagnostics are also behind build switches in `sensor_config.h`:
 
 | Switch | Default | Purpose |
@@ -72,7 +74,7 @@ ECG front-end diagnostics are also behind build switches in `sensor_config.h`:
 | `ENABLE_ECG_NOISE_DIAGNOSTICS` | On | Estimates cable/shield noise from common-mode movement |
 | `ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC` | On | Flags possible RLD loop oscillation when noise stays high |
 
-The USB and WiFi CSV schema includes `mic_ms`, `mic_seq8`, `acc_ms`, `acc_seq8`, `ecg_ms`, `ecg_seq8`, `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step` and `ecg_diff_step`. Keep these fields in future logger revisions until ECG hardware validation is complete.
+The USB and WiFi CSV schema includes `mic_ms`, `mic_seq8`, `acc_ms`, `acc_seq8`, `ecg_ms`, `ecg_seq8`, `ecg_lead_i`, `ecg_lead_ii`, `ecg_lead_iii`, `ecg_lead_off_p`, `ecg_lead_off_n`, `ecg_sat_mask`, `ecg_diag_flags`, `ecg_common_step` and `ecg_diff_step`. Keep these fields in future logger revisions until ECG hardware validation is complete.
 
 The `*_seq8` fields come from a single 8-bit Core 0 acquisition counter. Core 0 increments this counter every time it queues a sensor frame. The value wraps at `255 -> 0`. Missing or unexpected jumps show where frames were dropped or delayed. Each `*_ms` field is the Core 0 timestamp for the latest frame from that sensor.
 
