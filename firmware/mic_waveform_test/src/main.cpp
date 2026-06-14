@@ -1103,6 +1103,8 @@ static String wifiStatusJson()
   json += String(latestEcgDifferentialStep, 1);
   json += ",\"mic_level\":";
   json += String(smoothedLevel, 4);
+  json += ",\"mic_trace\":";
+  json += String(latestMicPoint, 4);
   json += ",\"acc_x\":";
   json += String(latestAccelX, 4);
   json += ",\"acc_y\":";
@@ -1112,6 +1114,14 @@ static String wifiStatusJson()
   json += ",\"acc_diag_flags\":\"";
   json += String(latestAccelDiagnosticFlags, HEX);
   json += "\"";
+  json += ",\"ecg_ch1\":";
+  json += String((long)latestEcgCh1);
+  json += ",\"ecg_ch2\":";
+  json += String((long)latestEcgCh2);
+  json += ",\"ecg_ch3\":";
+  json += String((long)latestEcgCh3);
+  json += ",\"ecg_ch4\":";
+  json += String((long)latestEcgCh4);
   json += ",\"greenLed\":";
   json += remoteLedManual ? (remoteGreenLedOn ? "true" : "false") : "true";
   json += ",\"blueLed\":";
