@@ -23,6 +23,11 @@ Main rule:
 
 - `firmware/mic_waveform_test/` - reads the I2S mic and shows a smooth live waveform on the round LCD.
 
+## Mobile app
+
+- `mobile/` - Flutter Android app for controlling the MotemaSens ESP32 device.
+- `docs/firmware/mobile_app_integration.md` - HTTP API contract between the Flutter app and ESP32 firmware.
+
 ## Current important note
 
 The HSI found one issue that needs fixing before bring-up: `SPI2_MISO` for the microSD is connected to H1 pin 18, but that pin is `VSYS` on the Waveshare board. This needs to be moved to a proper GPIO before powering a populated board.
