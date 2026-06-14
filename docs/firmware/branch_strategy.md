@@ -6,6 +6,8 @@
 
 `optimised` is for low-power and production-style logging work. Use this branch for LCD-off operation, lower CPU load, SD batch writes, reduced serial output, and power/runtime testing.
 
+`display-smooth-core1-test` is for testing display-freeze fixes before moving them to `main`. It keeps normal sensor firmware but reduces periodic Core 1 blocking work.
+
 ## Rule
 
 Important shared fixes must be applied to both branches. Examples:

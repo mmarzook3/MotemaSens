@@ -44,11 +44,11 @@ static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
-static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 1000;
+static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 5000;
 static constexpr uint16_t WIFI_LOG_PORT = 80;
 static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
 static constexpr uint32_t WIFI_CONNECT_BOOT_WAIT_MS = 3000;
-static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
+static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 5000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr uint32_t HEARTBEAT_LED_UPDATE_MS = 20;
@@ -197,6 +197,8 @@ static uint8_t ramUsagePct = 0;
 static uint8_t flashUsagePct = 0;
 static uint32_t freeHeapKb = 0;
 static uint32_t usedSketchKb = 0;
+static uint32_t cachedSketchKb = 0;
+static uint8_t cachedFlashUsagePct = 0;
 static WiFiClient wifiStreamClient;
 static Preferences preferences;
 static MicSensor micSensor;
@@ -462,10 +464,8 @@ static void updateSystemStatus(uint32_t now)
   freeHeapKb = freeHeap / 1024UL;
   ramUsagePct = heapSize > 0 ? constrain(((heapSize - freeHeap) * 100UL) / heapSize, 0UL, 100UL) : 0;
 
-  const uint32_t sketchSize = ESP.getSketchSize();
-  const uint32_t sketchSpace = ESP.getFreeSketchSpace() + sketchSize;
-  usedSketchKb = sketchSize / 1024UL;
-  flashUsagePct = sketchSpace > 0 ? constrain((sketchSize * 100UL) / sketchSpace, 0UL, 100UL) : 0;
+  usedSketchKb = cachedSketchKb;
+  flashUsagePct = cachedFlashUsagePct;
 }
 
 static void drawSystemStatusPanel()
@@ -974,6 +974,10 @@ static void updateUsbLiveLog(uint32_t now)
 
 static void updateEcgDiagDebug(uint32_t now)
 {
+#if !ENABLE_ECG_SERIAL_DIAGNOSTIC
+  (void)now;
+  return;
+#else
   if (usbLogActive || wifiLogActive || now - lastEcgDiagDebugMs < ECG_DIAG_DEBUG_PERIOD_MS) {
     return;
   }
@@ -992,6 +996,7 @@ static void updateEcgDiagDebug(uint32_t now)
                 (long)latestEcgCh2,
                 (long)latestEcgCh3,
                 (long)latestEcgCh4);
+#endif
 }
 
 static void startWifiLog(uint32_t now)
@@ -1100,7 +1105,7 @@ static String controlPageHtml()
   html += "<pre id='status'>loading...</pre>";
   html += "<script>async function refresh(){let r=await fetch('/api/status');";
   html += "document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);}";
-  html += "refresh();setInterval(refresh,1000);</script>";
+  html += "refresh();setInterval(refresh,3000);</script>";
   html += "</body></html>";
   return html;
 }
@@ -1662,6 +1667,16 @@ static void outputTask(void *)
     ++core1LoopCounter;
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
+    drainAcquisitionQueues();
+    updateUsbLiveLog(now);
+    updateWifiLiveLog(now);
+
+    const uint32_t displayPeriodMs = (usbLogActive || wifiLogActive) ? 120 : 24;
+    if (now - lastDrawMs >= displayPeriodMs) {
+      lastDrawMs = now;
+      drawCombinedGraph();
+    }
+
     startWifiServerIfConnected();
     handleWifiHttpClient(now);
     updateEcgDiagDebug(now);
@@ -1671,16 +1686,6 @@ static void outputTask(void *)
       otaCheckedOnce = true;
       lastOtaCheckMs = now;
       checkForOtaUpdate();
-    }
-
-    drainAcquisitionQueues();
-    updateUsbLiveLog(now);
-    updateWifiLiveLog(now);
-
-    const uint32_t displayPeriodMs = (usbLogActive || wifiLogActive) ? 120 : 24;
-    if (now - lastDrawMs >= displayPeriodMs) {
-      lastDrawMs = now;
-      drawCombinedGraph();
     }
 
     core1BusyMicros += micros() - loopStartUs;
@@ -1693,6 +1698,10 @@ void setup()
   DebugSerial.begin(115200);
   delay(200);
   DebugSerial.printf("device version: %s\n", DEVICE_VERSION);
+  const uint32_t sketchSize = ESP.getSketchSize();
+  const uint32_t sketchSpace = ESP.getFreeSketchSpace() + sketchSize;
+  cachedSketchKb = sketchSize / 1024UL;
+  cachedFlashUsagePct = sketchSpace > 0 ? constrain((sketchSize * 100UL) / sketchSpace, 0UL, 100UL) : 0;
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
