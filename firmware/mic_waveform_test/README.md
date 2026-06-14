@@ -176,6 +176,10 @@ Endpoints:
 - `/api/status` - JSON status with firmware version, IP, logging state, ECG sequence and latest sensor values.
 - `/api/start` - starts WiFi logging state and turns on the blue LED.
 - `/api/stop` - stops WiFi logging and closes the active stream.
+- `POST /api/led` - mobile app LED test control, body `{"led":"green","enabled":true}` or `{"led":"blue","enabled":true}`.
+- `POST /api/led-heartbeat` - returns LEDs to the normal alternating breathing heartbeat mode.
+- `POST /api/recording` - mobile app logging control, body `{"mode":"ecg"}`, `{"mode":"microphone"}` or `{"mode":"idle"}`.
+- `POST /api/self-test` - starts a short LED self-test and returns JSON status.
 - `/stream` - starts WiFi logging and streams the same CSV rows as USB live logging.
 - `/control?cmd=start` and `/control?cmd=stop` - simple control aliases.
 

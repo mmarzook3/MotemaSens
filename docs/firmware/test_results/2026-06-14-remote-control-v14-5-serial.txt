@@ -1,0 +1,21 @@
+device version: dev-2026.06.14.5-remote
+connecting wifi: M3_Devices
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+wifi connect pending, UI starting
+[  7414][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+QMI8658 ready at 0x6B, accel +/-8g 1000Hz
+ADS1294 ready, id=0x90 cfg=96,C0,EC ch=00,00,00,00
+ADS1294 diag rld=1 lead_off=1 loff=00 rldp=03 rldn=03 loffp=03 loffn=03
+mic accel ecg test running, acquisition core=0 output core=1
+usb live test ready: send S for 60 seconds, X to stop

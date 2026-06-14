@@ -2,6 +2,10 @@
 
 Checked on: 2026-06-14
 
+Latest tested firmware: `dev-2026.06.14.5-remote`
+
+Latest tested branch: `remote-control-test`
+
 ## Purpose
 
 This document explains how the MotemaSens Flutter mobile app is currently built so ESP32 firmware can be updated to communicate with it.
@@ -21,13 +25,13 @@ lib/main.dart
 
 The app expects the ESP32 to expose a small HTTP API over Wi-Fi.
 
-Default base URL in the app:
+Default base URL in the app for this bench setup:
 
 ```text
-http://192.168.4.1
+http://192.168.5.29
 ```
 
-This default is suitable if the ESP32 runs as a Wi-Fi access point. If the ESP32 joins an existing Wi-Fi network, enter its local network IP address in the app connection field.
+The app can still be pointed at another ESP32 IP address from the connection field.
 
 ## Required Firmware Endpoints
 
@@ -52,6 +56,24 @@ Expected JSON response:
   "sampleRate": 500,
   "sdReady": false,
   "recordingMode": "idle"
+}
+```
+
+The firmware also returns the existing logger fields used by the browser/tools, including:
+
+```json
+{
+  "version": "dev-2026.06.14.5-remote",
+  "wifi_connected": true,
+  "ip": "192.168.5.29",
+  "wifi_logging": false,
+  "usb_logging": false,
+  "ecg_ready": true,
+  "mic_level": 0.0347,
+  "acc_x": 0.0437,
+  "acc_y": 0.1174,
+  "acc_z": -0.9175,
+  "ledMode": "heartbeat"
 }
 ```
 
@@ -106,6 +128,14 @@ Recommended response:
 }
 ```
 
+The firmware also supports:
+
+```text
+POST /api/led-heartbeat
+```
+
+This returns the green and blue LEDs to the normal alternating breathing heartbeat mode after manual LED testing.
+
 ### Recording Control
 
 ```text
@@ -130,9 +160,9 @@ microphone
 
 Firmware behavior:
 
-- `idle`: stop acquisition.
-- `ecg`: start ADS1294 ECG acquisition.
-- `microphone`: start I2S microphone acquisition.
+- `idle`: stop WiFi logging.
+- `ecg`: start WiFi logging with the combined ECG/mic/accelerometer data stream available from `/stream`.
+- `microphone`: start WiFi logging with the same combined data stream. The current firmware keeps sensors running continuously, so this mode is treated as a logging/control request rather than powering sensors on/off.
 
 Recommended response:
 
@@ -272,10 +302,10 @@ Recommended firmware behavior:
 3. Return JSON with `Content-Type: application/json`.
 4. Keep LED state in firmware so `/api/status` reflects the last command.
 5. Read SW1/SW2 as active-low inputs.
-6. Use safe defaults on boot:
-   - LEDs off.
-   - recording mode `idle`.
-   - ADS1294 held in a safe inactive state until explicitly started.
+6. Current dev firmware default behavior:
+   - LEDs run the alternating breathing heartbeat.
+   - WiFi logging starts only by `/api/start`, `/stream`, or app recording command.
+   - Sensors keep running for live display and status.
 7. Do not expose ECG human-contact workflows until safety validation is complete.
 8. Do not enable microSD until `SPI2_MISO` is fixed.
 
@@ -305,7 +335,24 @@ curl -X POST http://192.168.4.1/api/self-test `
   -d "{}"
 ```
 
+```powershell
+curl -X POST http://192.168.4.1/api/led-heartbeat `
+  -H "Content-Type: application/json" `
+  -d "{}"
+```
+
 ## Current App Verification
+
+Verified on 2026-06-14:
+
+- Firmware build and flash passed on `COM14`.
+- HTTP API test passed for status, manual LEDs, LED heartbeat mode, WiFi logging start/stop and self-test.
+- Flutter analyze passed.
+- Flutter widget tests passed.
+- Android debug APK built.
+- APK installed and launched on connected phone `RFCY508DWBP`.
+- APK installed and launched on emulator `emulator-5554`.
+- Both Android targets connected to ESP32 at `192.168.5.29` and showed firmware `dev-2026.06.14.5-remote`.
 
 The mobile app has been verified with:
 

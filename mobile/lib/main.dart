@@ -44,6 +44,12 @@ class DeviceSnapshot {
     required this.sdReady,
     required this.recordingMode,
     required this.lastSeen,
+    required this.version,
+    required this.ip,
+    required this.ledMode,
+    required this.wifiLogging,
+    required this.usbLogging,
+    required this.selfTestActive,
   });
 
   factory DeviceSnapshot.demo({
@@ -62,12 +68,20 @@ class DeviceSnapshot {
       sdReady: false,
       recordingMode: recordingMode,
       lastSeen: DateTime.now(),
+      version: 'demo',
+      ip: 'not connected',
+      ledMode: 'heartbeat',
+      wifiLogging: false,
+      usbLogging: false,
+      selfTestActive: false,
     );
   }
 
   factory DeviceSnapshot.fromJson(Map<String, dynamic> json) {
     RecordingMode mode;
-    switch (json['recordingMode']) {
+    final recordingMode = json['recordingMode'] ??
+        ((json['wifi_logging'] == true) ? 'ecg' : 'idle');
+    switch (recordingMode) {
       case 'ecg':
         mode = RecordingMode.ecg;
       case 'microphone':
@@ -76,17 +90,28 @@ class DeviceSnapshot {
         mode = RecordingMode.idle;
     }
 
+    final signalQuality = (json['signalQuality'] as num?)?.toInt() ??
+        ((json['ecg_ready'] == true) ? 100 : 35);
+    final wifiRate = (json['wifi_rate_hz'] as num?)?.round() ?? 0;
+
     return DeviceSnapshot(
       greenLed: json['greenLed'] == true,
       blueLed: json['blueLed'] == true,
       sw1Pressed: json['sw1Pressed'] == true,
       sw2Pressed: json['sw2Pressed'] == true,
       batteryVolts: (json['batteryVolts'] as num?)?.toDouble() ?? 0,
-      signalQuality: (json['signalQuality'] as num?)?.toInt() ?? 0,
-      sampleRate: (json['sampleRate'] as num?)?.toInt() ?? 0,
+      signalQuality: signalQuality.clamp(0, 100),
+      sampleRate: (json['sampleRate'] as num?)?.toInt() ??
+          (wifiRate > 0 ? wifiRate : 100),
       sdReady: json['sdReady'] == true,
       recordingMode: mode,
       lastSeen: DateTime.now(),
+      version: (json['version'] as String?) ?? 'unknown',
+      ip: (json['ip'] as String?) ?? '',
+      ledMode: (json['ledMode'] as String?) ?? 'heartbeat',
+      wifiLogging: json['wifi_logging'] == true,
+      usbLogging: json['usb_logging'] == true,
+      selfTestActive: json['selfTestActive'] == true,
     );
   }
 
@@ -100,6 +125,12 @@ class DeviceSnapshot {
   final bool sdReady;
   final RecordingMode recordingMode;
   final DateTime lastSeen;
+  final String version;
+  final String ip;
+  final String ledMode;
+  final bool wifiLogging;
+  final bool usbLogging;
+  final bool selfTestActive;
 
   DeviceSnapshot copyWith({
     bool? greenLed,
@@ -112,6 +143,12 @@ class DeviceSnapshot {
     bool? sdReady,
     RecordingMode? recordingMode,
     DateTime? lastSeen,
+    String? version,
+    String? ip,
+    String? ledMode,
+    bool? wifiLogging,
+    bool? usbLogging,
+    bool? selfTestActive,
   }) {
     return DeviceSnapshot(
       greenLed: greenLed ?? this.greenLed,
@@ -124,6 +161,12 @@ class DeviceSnapshot {
       sdReady: sdReady ?? this.sdReady,
       recordingMode: recordingMode ?? this.recordingMode,
       lastSeen: lastSeen ?? this.lastSeen,
+      version: version ?? this.version,
+      ip: ip ?? this.ip,
+      ledMode: ledMode ?? this.ledMode,
+      wifiLogging: wifiLogging ?? this.wifiLogging,
+      usbLogging: usbLogging ?? this.usbLogging,
+      selfTestActive: selfTestActive ?? this.selfTestActive,
     );
   }
 }
@@ -152,6 +195,10 @@ class DeviceApi {
 
   Future<void> setLed({required String led, required bool enabled}) async {
     await _post('/api/led', {'led': led, 'enabled': enabled});
+  }
+
+  Future<void> setLedHeartbeat() async {
+    await _post('/api/led-heartbeat', {});
   }
 
   Future<void> setRecording(RecordingMode mode) async {
@@ -190,7 +237,7 @@ class DeviceControllerScreen extends StatefulWidget {
 
 class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
   final TextEditingController _baseUrlController =
-      TextEditingController(text: 'http://192.168.4.1');
+      TextEditingController(text: 'http://192.168.5.29');
   final List<String> _events = <String>[
     'Ready. Connect to your ESP32 or use demo mode.'
   ];
@@ -318,6 +365,29 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
     }
   }
 
+  Future<void> _setLedHeartbeat() async {
+    setState(() {
+      _snapshot = _snapshot.copyWith(
+        ledMode: 'heartbeat',
+        greenLed: true,
+        blueLed: true,
+        lastSeen: DateTime.now(),
+      );
+    });
+
+    if (_connection == ConnectionStateKind.connected && _api != null) {
+      try {
+        await _api!.setLedHeartbeat();
+        _log('LEDs returned to heartbeat mode.');
+        await _refreshStatus(silent: true);
+      } catch (error) {
+        _log('LED heartbeat command failed.');
+      }
+    } else {
+      _log('LED heartbeat mode selected in demo mode.');
+    }
+  }
+
   Future<void> _setRecording(RecordingMode mode) async {
     setState(() {
       _snapshot =
@@ -374,6 +444,7 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
         onDisconnect: _disconnect,
         onRefresh: _refreshStatus,
         onSetLed: _setLed,
+        onSetLedHeartbeat: _setLedHeartbeat,
         onSetRecording: _setRecording,
         onSelfTest: _runSelfTest,
       ),
@@ -430,6 +501,7 @@ class _DashboardView extends StatelessWidget {
     required this.onDisconnect,
     required this.onRefresh,
     required this.onSetLed,
+    required this.onSetLedHeartbeat,
     required this.onSetRecording,
     required this.onSelfTest,
   });
@@ -442,6 +514,7 @@ class _DashboardView extends StatelessWidget {
   final VoidCallback onDisconnect;
   final Future<void> Function({bool silent}) onRefresh;
   final Future<void> Function(String led, bool enabled) onSetLed;
+  final Future<void> Function() onSetLedHeartbeat;
   final Future<void> Function(RecordingMode mode) onSetRecording;
   final VoidCallback onSelfTest;
 
@@ -459,7 +532,11 @@ class _DashboardView extends StatelessWidget {
         const SizedBox(height: 12),
         _HealthPanel(snapshot: snapshot, connection: connection),
         const SizedBox(height: 12),
-        _LedPanel(snapshot: snapshot, onSetLed: onSetLed),
+        _LedPanel(
+          snapshot: snapshot,
+          onSetLed: onSetLed,
+          onSetLedHeartbeat: onSetLedHeartbeat,
+        ),
         const SizedBox(height: 12),
         _RecordingPanel(snapshot: snapshot, onSetRecording: onSetRecording),
         const SizedBox(height: 12),
@@ -580,6 +657,27 @@ class _HealthPanel extends StatelessWidget {
                       icon: Icons.sd_card)),
             ],
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                  child: _MetricTile(
+                      label: 'Firmware',
+                      value: snapshot.version,
+                      icon: Icons.new_releases_outlined)),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: _MetricTile(
+                      label: 'WiFi log',
+                      value: snapshot.wifiLogging ? 'Running' : 'Stopped',
+                      icon: Icons.wifi_tethering)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'IP ${snapshot.ip.isEmpty ? 'not connected' : snapshot.ip}  USB ${snapshot.usbLogging ? 'logging' : 'idle'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
     );
@@ -587,10 +685,15 @@ class _HealthPanel extends StatelessWidget {
 }
 
 class _LedPanel extends StatelessWidget {
-  const _LedPanel({required this.snapshot, required this.onSetLed});
+  const _LedPanel({
+    required this.snapshot,
+    required this.onSetLed,
+    required this.onSetLedHeartbeat,
+  });
 
   final DeviceSnapshot snapshot;
   final Future<void> Function(String led, bool enabled) onSetLed;
+  final Future<void> Function() onSetLedHeartbeat;
 
   @override
   Widget build(BuildContext context) {
@@ -615,6 +718,14 @@ class _LedPanel extends StatelessWidget {
             secondary: const Icon(Icons.circle, color: Color(0xFF2563EB)),
             value: snapshot.blueLed,
             onChanged: (value) => onSetLed('blue', value),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: onSetLedHeartbeat,
+            icon: const Icon(Icons.favorite_outline),
+            label: Text(snapshot.ledMode == 'heartbeat'
+                ? 'Heartbeat mode active'
+                : 'Return to heartbeat mode'),
           ),
         ],
       ),
