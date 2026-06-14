@@ -34,6 +34,10 @@
 #define ENABLE_ECG_RLD_STABILITY_DIAGNOSTIC 1
 #endif
 
+#ifndef ENABLE_ECG_SERIAL_DIAGNOSTIC
+#define ENABLE_ECG_SERIAL_DIAGNOSTIC 0
+#endif
+
 // Waveshare ESP32-S3-LCD-1.28 display pins.
 static constexpr int LCD_DC = 8;
 static constexpr int LCD_CS = 9;
