@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -44,6 +45,15 @@ class DeviceSnapshot {
     required this.sdReady,
     required this.recordingMode,
     required this.lastSeen,
+    required this.version,
+    required this.ip,
+    required this.ledMode,
+    required this.wifiLogging,
+    required this.usbLogging,
+    required this.selfTestActive,
+    required this.micTrace,
+    required this.ecgCh1,
+    required this.ecgCh2,
   });
 
   factory DeviceSnapshot.demo({
@@ -62,12 +72,23 @@ class DeviceSnapshot {
       sdReady: false,
       recordingMode: recordingMode,
       lastSeen: DateTime.now(),
+      version: 'demo',
+      ip: 'not connected',
+      ledMode: 'heartbeat',
+      wifiLogging: false,
+      usbLogging: false,
+      selfTestActive: false,
+      micTrace: 0,
+      ecgCh1: 0,
+      ecgCh2: 0,
     );
   }
 
   factory DeviceSnapshot.fromJson(Map<String, dynamic> json) {
     RecordingMode mode;
-    switch (json['recordingMode']) {
+    final recordingMode = json['recordingMode'] ??
+        ((json['wifi_logging'] == true) ? 'ecg' : 'idle');
+    switch (recordingMode) {
       case 'ecg':
         mode = RecordingMode.ecg;
       case 'microphone':
@@ -76,17 +97,31 @@ class DeviceSnapshot {
         mode = RecordingMode.idle;
     }
 
+    final signalQuality = (json['signalQuality'] as num?)?.toInt() ??
+        ((json['ecg_ready'] == true) ? 100 : 35);
+    final wifiRate = (json['wifi_rate_hz'] as num?)?.round() ?? 0;
+
     return DeviceSnapshot(
       greenLed: json['greenLed'] == true,
       blueLed: json['blueLed'] == true,
       sw1Pressed: json['sw1Pressed'] == true,
       sw2Pressed: json['sw2Pressed'] == true,
       batteryVolts: (json['batteryVolts'] as num?)?.toDouble() ?? 0,
-      signalQuality: (json['signalQuality'] as num?)?.toInt() ?? 0,
-      sampleRate: (json['sampleRate'] as num?)?.toInt() ?? 0,
+      signalQuality: signalQuality.clamp(0, 100),
+      sampleRate: (json['sampleRate'] as num?)?.toInt() ??
+          (wifiRate > 0 ? wifiRate : 100),
       sdReady: json['sdReady'] == true,
       recordingMode: mode,
       lastSeen: DateTime.now(),
+      version: (json['version'] as String?) ?? 'unknown',
+      ip: (json['ip'] as String?) ?? '',
+      ledMode: (json['ledMode'] as String?) ?? 'heartbeat',
+      wifiLogging: json['wifi_logging'] == true,
+      usbLogging: json['usb_logging'] == true,
+      selfTestActive: json['selfTestActive'] == true,
+      micTrace: (json['mic_trace'] as num?)?.toDouble() ?? 0,
+      ecgCh1: (json['ecg_ch1'] as num?)?.toDouble() ?? 0,
+      ecgCh2: (json['ecg_ch2'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -100,6 +135,15 @@ class DeviceSnapshot {
   final bool sdReady;
   final RecordingMode recordingMode;
   final DateTime lastSeen;
+  final String version;
+  final String ip;
+  final String ledMode;
+  final bool wifiLogging;
+  final bool usbLogging;
+  final bool selfTestActive;
+  final double micTrace;
+  final double ecgCh1;
+  final double ecgCh2;
 
   DeviceSnapshot copyWith({
     bool? greenLed,
@@ -112,6 +156,15 @@ class DeviceSnapshot {
     bool? sdReady,
     RecordingMode? recordingMode,
     DateTime? lastSeen,
+    String? version,
+    String? ip,
+    String? ledMode,
+    bool? wifiLogging,
+    bool? usbLogging,
+    bool? selfTestActive,
+    double? micTrace,
+    double? ecgCh1,
+    double? ecgCh2,
   }) {
     return DeviceSnapshot(
       greenLed: greenLed ?? this.greenLed,
@@ -124,6 +177,15 @@ class DeviceSnapshot {
       sdReady: sdReady ?? this.sdReady,
       recordingMode: recordingMode ?? this.recordingMode,
       lastSeen: lastSeen ?? this.lastSeen,
+      version: version ?? this.version,
+      ip: ip ?? this.ip,
+      ledMode: ledMode ?? this.ledMode,
+      wifiLogging: wifiLogging ?? this.wifiLogging,
+      usbLogging: usbLogging ?? this.usbLogging,
+      selfTestActive: selfTestActive ?? this.selfTestActive,
+      micTrace: micTrace ?? this.micTrace,
+      ecgCh1: ecgCh1 ?? this.ecgCh1,
+      ecgCh2: ecgCh2 ?? this.ecgCh2,
     );
   }
 }
@@ -152,6 +214,10 @@ class DeviceApi {
 
   Future<void> setLed({required String led, required bool enabled}) async {
     await _post('/api/led', {'led': led, 'enabled': enabled});
+  }
+
+  Future<void> setLedHeartbeat() async {
+    await _post('/api/led-heartbeat', {});
   }
 
   Future<void> setRecording(RecordingMode mode) async {
@@ -190,7 +256,7 @@ class DeviceControllerScreen extends StatefulWidget {
 
 class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
   final TextEditingController _baseUrlController =
-      TextEditingController(text: 'http://192.168.4.1');
+      TextEditingController(text: 'http://192.168.5.29');
   final List<String> _events = <String>[
     'Ready. Connect to your ESP32 or use demo mode.'
   ];
@@ -206,16 +272,27 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
     0.35,
     -0.12
   ];
+  final List<double> _micSamples = List<double>.filled(180, 0);
 
   DeviceSnapshot _snapshot = DeviceSnapshot.demo();
   ConnectionStateKind _connection = ConnectionStateKind.demo;
   int _tabIndex = 0;
   Timer? _pollTimer;
+  Timer? _livePaintTimer;
+  Timer? _livePollTimer;
   DeviceApi? _api;
+  bool _liveStreaming = false;
+  String _liveMessage = 'Live stream idle';
+  int _liveSamples = 0;
+  double _ecgBaseline = 0;
+  double _ecgScale = 90000;
+  double _micPeak = 0.05;
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _livePaintTimer?.cancel();
+    _livePollTimer?.cancel();
     _baseUrlController.dispose();
     super.dispose();
   }
@@ -259,6 +336,7 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
 
   void _disconnect() {
     _pollTimer?.cancel();
+    _stopLiveStream(sendStop: true);
     setState(() {
       _connection = ConnectionStateKind.offline;
     });
@@ -318,6 +396,29 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
     }
   }
 
+  Future<void> _setLedHeartbeat() async {
+    setState(() {
+      _snapshot = _snapshot.copyWith(
+        ledMode: 'heartbeat',
+        greenLed: true,
+        blueLed: true,
+        lastSeen: DateTime.now(),
+      );
+    });
+
+    if (_connection == ConnectionStateKind.connected && _api != null) {
+      try {
+        await _api!.setLedHeartbeat();
+        _log('LEDs returned to heartbeat mode.');
+        await _refreshStatus(silent: true);
+      } catch (error) {
+        _log('LED heartbeat command failed.');
+      }
+    } else {
+      _log('LED heartbeat mode selected in demo mode.');
+    }
+  }
+
   Future<void> _setRecording(RecordingMode mode) async {
     setState(() {
       _snapshot =
@@ -331,12 +432,142 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
       try {
         await _api!.setRecording(mode);
         _log('${_modeLabel(mode)} command sent.');
+        if (mode == RecordingMode.idle && _liveStreaming) {
+          await _stopLiveStream(sendStop: false);
+        }
       } catch (error) {
         _log('Recording command failed. Check firmware endpoint.');
       }
     } else {
       _log('${_modeLabel(mode)} selected in demo mode.');
     }
+  }
+
+  Future<void> _toggleLiveStream() async {
+    if (_liveStreaming) {
+      await _stopLiveStream(sendStop: true);
+      return;
+    }
+    await _startLiveStream();
+  }
+
+  Future<void> _startLiveStream() async {
+    if (_connection != ConnectionStateKind.connected || _api == null) {
+      _log('Connect to ESP32 before starting live view.');
+      setState(() => _liveMessage = 'Connect to ESP32 first');
+      return;
+    }
+
+    await _stopLiveStream(sendStop: false);
+    setState(() {
+      _liveStreaming = true;
+      _liveMessage = 'Starting live view...';
+      _liveSamples = 0;
+    });
+
+    _livePaintTimer?.cancel();
+    _livePaintTimer =
+        Timer.periodic(const Duration(milliseconds: 33), (_) {
+      if (mounted && _liveStreaming) {
+        setState(() {});
+      }
+    });
+
+    try {
+      await _api!.setRecording(RecordingMode.ecg);
+      final first = await _api!.fetchStatus();
+      _appendLiveSnapshot(first);
+      setState(() => _snapshot = first);
+      _livePollTimer = Timer.periodic(
+        const Duration(milliseconds: 80),
+        (_) => _pollLiveSample(),
+      );
+      _log('Live waveform view started.');
+      setState(() => _liveMessage = 'Live stream running');
+    } catch (error) {
+      _livePaintTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _liveStreaming = false;
+          _liveMessage = 'Live stream failed';
+        });
+      }
+      _log('Live stream failed. Check ESP32 WiFi.');
+    }
+  }
+
+  Future<void> _stopLiveStream({required bool sendStop}) async {
+    _livePaintTimer?.cancel();
+    _livePaintTimer = null;
+    _livePollTimer?.cancel();
+    _livePollTimer = null;
+    final wasStreaming = _liveStreaming;
+    if (mounted) {
+      setState(() {
+        _liveStreaming = false;
+        _liveMessage = 'Live stream stopped';
+      });
+    }
+    if (sendStop && wasStreaming && _api != null) {
+      try {
+        await _api!.setRecording(RecordingMode.idle);
+      } catch (_) {
+        // The stream may already have closed on the ESP32 side.
+      }
+    }
+  }
+
+  Future<void> _pollLiveSample() async {
+    if (!_liveStreaming || _api == null) {
+      return;
+    }
+    try {
+      final snapshot = await _api!.fetchStatus();
+      _appendLiveSnapshot(snapshot);
+      if (mounted) {
+        setState(() {
+          _snapshot = snapshot;
+          _liveMessage = 'Live stream running';
+        });
+      }
+    } catch (_) {
+      _livePollTimer?.cancel();
+      _livePaintTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _liveStreaming = false;
+          _liveMessage = 'Live stream stopped';
+        });
+      }
+      _log('Live view stopped. ESP32 status not reachable.');
+    }
+  }
+
+  void _appendLiveSnapshot(DeviceSnapshot snapshot) {
+    final mic = snapshot.micTrace.clamp(-1.0, 1.0);
+    _micPeak = math.max(0.02, (_micPeak * 0.985) + (mic.abs() * 0.015));
+    _appendBounded(
+      _micSamples,
+      (mic / math.max(_micPeak, 0.04)).clamp(-1.0, 1.0),
+    );
+
+    final ecgRaw = snapshot.ecgCh1 - snapshot.ecgCh2;
+    _ecgBaseline += (ecgRaw - _ecgBaseline) * 0.006;
+    final ecgFiltered = ecgRaw - _ecgBaseline;
+    _ecgScale =
+        math.max(30000, (_ecgScale * 0.992) + (ecgFiltered.abs() * 0.008));
+    _appendBounded(
+      _ecgSamples,
+      (ecgFiltered / _ecgScale).clamp(-1.0, 1.0),
+    );
+    ++_liveSamples;
+  }
+
+  void _appendBounded(List<double> samples, double value) {
+    if (samples.length >= 180) {
+      samples.removeAt(0);
+    }
+    samples.add(value);
   }
 
   Future<void> _runSelfTest() async {
@@ -374,10 +605,20 @@ class _DeviceControllerScreenState extends State<DeviceControllerScreen> {
         onDisconnect: _disconnect,
         onRefresh: _refreshStatus,
         onSetLed: _setLed,
+        onSetLedHeartbeat: _setLedHeartbeat,
         onSetRecording: _setRecording,
         onSelfTest: _runSelfTest,
       ),
-      _TelemetryView(snapshot: _snapshot, ecgSamples: _ecgSamples),
+      _TelemetryView(
+        snapshot: _snapshot,
+        connection: _connection,
+        ecgSamples: _ecgSamples,
+        micSamples: _micSamples,
+        liveStreaming: _liveStreaming,
+        liveMessage: _liveMessage,
+        liveSamples: _liveSamples,
+        onToggleLive: _toggleLiveStream,
+      ),
       _HardwareView(),
       _LogView(events: _events),
     ];
@@ -430,6 +671,7 @@ class _DashboardView extends StatelessWidget {
     required this.onDisconnect,
     required this.onRefresh,
     required this.onSetLed,
+    required this.onSetLedHeartbeat,
     required this.onSetRecording,
     required this.onSelfTest,
   });
@@ -442,6 +684,7 @@ class _DashboardView extends StatelessWidget {
   final VoidCallback onDisconnect;
   final Future<void> Function({bool silent}) onRefresh;
   final Future<void> Function(String led, bool enabled) onSetLed;
+  final Future<void> Function() onSetLedHeartbeat;
   final Future<void> Function(RecordingMode mode) onSetRecording;
   final VoidCallback onSelfTest;
 
@@ -459,7 +702,11 @@ class _DashboardView extends StatelessWidget {
         const SizedBox(height: 12),
         _HealthPanel(snapshot: snapshot, connection: connection),
         const SizedBox(height: 12),
-        _LedPanel(snapshot: snapshot, onSetLed: onSetLed),
+        _LedPanel(
+          snapshot: snapshot,
+          onSetLed: onSetLed,
+          onSetLedHeartbeat: onSetLedHeartbeat,
+        ),
         const SizedBox(height: 12),
         _RecordingPanel(snapshot: snapshot, onSetRecording: onSetRecording),
         const SizedBox(height: 12),
@@ -580,6 +827,27 @@ class _HealthPanel extends StatelessWidget {
                       icon: Icons.sd_card)),
             ],
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                  child: _MetricTile(
+                      label: 'Firmware',
+                      value: snapshot.version,
+                      icon: Icons.new_releases_outlined)),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: _MetricTile(
+                      label: 'WiFi log',
+                      value: snapshot.wifiLogging ? 'Running' : 'Stopped',
+                      icon: Icons.wifi_tethering)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'IP ${snapshot.ip.isEmpty ? 'not connected' : snapshot.ip}  USB ${snapshot.usbLogging ? 'logging' : 'idle'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
     );
@@ -587,10 +855,15 @@ class _HealthPanel extends StatelessWidget {
 }
 
 class _LedPanel extends StatelessWidget {
-  const _LedPanel({required this.snapshot, required this.onSetLed});
+  const _LedPanel({
+    required this.snapshot,
+    required this.onSetLed,
+    required this.onSetLedHeartbeat,
+  });
 
   final DeviceSnapshot snapshot;
   final Future<void> Function(String led, bool enabled) onSetLed;
+  final Future<void> Function() onSetLedHeartbeat;
 
   @override
   Widget build(BuildContext context) {
@@ -615,6 +888,14 @@ class _LedPanel extends StatelessWidget {
             secondary: const Icon(Icons.circle, color: Color(0xFF2563EB)),
             value: snapshot.blueLed,
             onChanged: (value) => onSetLed('blue', value),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: onSetLedHeartbeat,
+            icon: const Icon(Icons.favorite_outline),
+            label: Text(snapshot.ledMode == 'heartbeat'
+                ? 'Heartbeat mode active'
+                : 'Return to heartbeat mode'),
           ),
         ],
       ),
@@ -760,13 +1041,29 @@ class _SafetyPanel extends StatelessWidget {
 }
 
 class _TelemetryView extends StatelessWidget {
-  const _TelemetryView({required this.snapshot, required this.ecgSamples});
+  const _TelemetryView({
+    required this.snapshot,
+    required this.connection,
+    required this.ecgSamples,
+    required this.micSamples,
+    required this.liveStreaming,
+    required this.liveMessage,
+    required this.liveSamples,
+    required this.onToggleLive,
+  });
 
   final DeviceSnapshot snapshot;
+  final ConnectionStateKind connection;
   final List<double> ecgSamples;
+  final List<double> micSamples;
+  final bool liveStreaming;
+  final String liveMessage;
+  final int liveSamples;
+  final Future<void> Function() onToggleLive;
 
   @override
   Widget build(BuildContext context) {
+    final connected = connection == ConnectionStateKind.connected;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -774,39 +1071,97 @@ class _TelemetryView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _SectionTitle(
-                  icon: Icons.monitor_heart_outlined, title: 'ECG preview'),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 160,
-                child: CustomPaint(
-                  painter: _SignalPainter(ecgSamples,
-                      color: Theme.of(context).colorScheme.primary),
-                  child: const SizedBox.expand(),
+              _SectionTitle(
+                icon: Icons.sensors,
+                title: 'Live view',
+                trailing: _StatusPill(
+                  label: liveStreaming ? 'Live' : _connectionLabel(connection),
+                  tone: liveStreaming ? _Tone.good : _Tone.warn,
                 ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: connected ? onToggleLive : null,
+                icon: Icon(liveStreaming
+                    ? Icons.stop_circle_outlined
+                    : Icons.play_circle_outline),
+                label: Text(liveStreaming ? 'Stop live view' : 'Start live view'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$liveMessage  samples $liveSamples  ${snapshot.ip.isEmpty ? '' : snapshot.ip}',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
           ),
         ),
         const SizedBox(height: 12),
-        _SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(icon: Icons.mic_none, title: 'Microphone'),
-              const SizedBox(height: 12),
-              LinearProgressIndicator(
-                  value: snapshot.recordingMode == RecordingMode.microphone
-                      ? 0.64
-                      : 0.08),
-              const SizedBox(height: 8),
-              Text(snapshot.recordingMode == RecordingMode.microphone
-                  ? 'Audio stream active'
-                  : 'Audio stream idle'),
-            ],
-          ),
+        _WaveformCard(
+          title: 'ECG waveform',
+          icon: Icons.monitor_heart_outlined,
+          samples: ecgSamples,
+          color: const Color(0xFF10B981),
+          centerLabel: 'ECG',
+          footer: liveStreaming
+              ? 'Lead differential, auto scaled'
+              : 'Press Start live view to stream ECG',
+        ),
+        const SizedBox(height: 12),
+        _WaveformCard(
+          title: 'Microphone waveform',
+          icon: Icons.mic_none,
+          samples: micSamples,
+          color: const Color(0xFF2563EB),
+          centerLabel: 'MIC',
+          footer: liveStreaming
+              ? 'I2S mic trace, auto gain'
+              : 'Press Start live view to stream mic',
         ),
       ],
+    );
+  }
+}
+
+class _WaveformCard extends StatelessWidget {
+  const _WaveformCard({
+    required this.title,
+    required this.icon,
+    required this.samples,
+    required this.color,
+    required this.centerLabel,
+    required this.footer,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<double> samples;
+  final Color color;
+  final String centerLabel;
+  final String footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle(icon: icon, title: title),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 180,
+            child: CustomPaint(
+              painter: _SignalPainter(
+                samples,
+                color: color,
+                centerLabel: centerLabel,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(footer, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
     );
   }
 }
@@ -1056,44 +1411,96 @@ class _InputTile extends StatelessWidget {
 }
 
 class _SignalPainter extends CustomPainter {
-  _SignalPainter(this.samples, {required this.color});
+  _SignalPainter(
+    this.samples, {
+    required this.color,
+    required this.centerLabel,
+  });
 
   final List<double> samples;
   final Color color;
+  final String centerLabel;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final plotRect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(8),
+    );
+    final bgPaint = Paint()..color = const Color(0xFF071114);
+    canvas.drawRRect(plotRect, bgPaint);
+
     final gridPaint = Paint()
-      ..color = const Color(0xFFE5E7EB)
+      ..color = const Color(0x2238BDF8)
       ..strokeWidth = 1;
-    for (var i = 0; i < 5; i++) {
-      final y = size.height * i / 4;
+    for (var i = 1; i < 6; i++) {
+      final y = size.height * i / 6;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
+    for (var i = 1; i < 8; i++) {
+      final x = size.width * i / 8;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
 
-    final signalPaint = Paint()
+    final centerPaint = Paint()
+      ..color = const Color(0x55E5E7EB)
+      ..strokeWidth = 1.2;
+    canvas.drawLine(
+      Offset(0, size.height / 2),
+      Offset(size.width, size.height / 2),
+      centerPaint,
+    );
+
+    final glowPaint = Paint()
+      ..color = color.withValues(alpha: 0.22)
+      ..strokeWidth = 8
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final linePaint = Paint()
       ..color = color
-      ..strokeWidth = 3
+      ..strokeWidth = 2.4
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
     final path = Path();
+    if (samples.length < 2) {
+      return;
+    }
     for (var i = 0; i < samples.length; i++) {
       final x = size.width * i / (samples.length - 1);
-      final y = size.height / 2 - samples[i] * size.height * 0.72;
+      final sample = samples[i].clamp(-1.0, 1.0);
+      final y = size.height / 2 - sample * size.height * 0.42;
       if (i == 0) {
         path.moveTo(x, y);
       } else {
         path.lineTo(x, y);
       }
     }
-    canvas.drawPath(path, signalPaint);
+    canvas.drawPath(path, glowPaint);
+    canvas.drawPath(path, linePaint);
+
+    final labelPainter = TextPainter(
+      text: TextSpan(
+        text: centerLabel,
+        style: const TextStyle(
+          color: Color(0x99FFFFFF),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    labelPainter.paint(canvas, Offset(10, size.height / 2 + 8));
   }
 
   @override
   bool shouldRepaint(covariant _SignalPainter oldDelegate) {
-    return oldDelegate.samples != samples || oldDelegate.color != color;
+    return oldDelegate.samples != samples ||
+        oldDelegate.color != color ||
+        oldDelegate.centerLabel != centerLabel;
   }
 }
 
