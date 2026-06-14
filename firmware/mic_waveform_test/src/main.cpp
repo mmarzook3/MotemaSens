@@ -39,15 +39,16 @@
 #endif
 
 static constexpr size_t DISPLAY_POINTS_PER_BLOCK = 2;
+static constexpr size_t MIC_DISPLAY_SCROLL_DIVIDER = 4;
 static constexpr size_t LABEL_HISTORY = 8;
 static constexpr uint32_t ACCEL_DEBUG_PERIOD_MS = 1000;
 static constexpr uint32_t USB_LOG_DURATION_MS = 60000;
 static constexpr uint32_t USB_LOG_PERIOD_MS = 10;
-static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 1000;
+static constexpr uint32_t ECG_DIAG_DEBUG_PERIOD_MS = 5000;
 static constexpr uint16_t WIFI_LOG_PORT = 80;
 static constexpr uint32_t WIFI_LOG_PERIOD_MS = 10;
 static constexpr uint32_t WIFI_CONNECT_BOOT_WAIT_MS = 3000;
-static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 1000;
+static constexpr uint32_t SYSTEM_STATUS_PERIOD_MS = 5000;
 static constexpr uint32_t HEART_REFRACTORY_MS = 720;
 static constexpr uint32_t HEART_PEAK_HOLD_MS = 180;
 static constexpr uint32_t HEARTBEAT_LED_UPDATE_MS = 20;
@@ -146,6 +147,8 @@ static uint32_t latestAccelTimestampMs = 0;
 static uint8_t latestAccelAcqSeq8 = 0;
 static uint8_t latestAccelDiagnosticFlags = 0;
 static float latestMicPoint = 0.0f;
+static float pendingMicDisplaySum = 0.0f;
+static size_t pendingMicDisplayCount = 0;
 static uint32_t latestMicTimestampMs = 0;
 static uint8_t latestMicAcqSeq8 = 0;
 static int32_t latestEcgCh1 = 0;
@@ -179,6 +182,11 @@ static uint32_t wifiLogStartMs = 0;
 static uint32_t wifiLogLastSampleMs = 0;
 static uint32_t wifiLogSamples = 0;
 static uint32_t wifiLogBeats = 0;
+static bool remoteLedManual = false;
+static bool remoteGreenLedOn = false;
+static bool remoteBlueLedOn = false;
+static bool selfTestActive = false;
+static uint32_t selfTestStartMs = 0;
 static volatile uint32_t core0LoopCounter = 0;
 static uint8_t core0AcqSeq8 = 0;
 static volatile uint32_t core1LoopCounter = 0;
@@ -194,6 +202,8 @@ static uint8_t ramUsagePct = 0;
 static uint8_t flashUsagePct = 0;
 static uint32_t freeHeapKb = 0;
 static uint32_t usedSketchKb = 0;
+static uint32_t cachedSketchKb = 0;
+static uint8_t cachedFlashUsagePct = 0;
 static WiFiClient wifiStreamClient;
 static Preferences preferences;
 static MicSensor micSensor;
@@ -459,10 +469,8 @@ static void updateSystemStatus(uint32_t now)
   freeHeapKb = freeHeap / 1024UL;
   ramUsagePct = heapSize > 0 ? constrain(((heapSize - freeHeap) * 100UL) / heapSize, 0UL, 100UL) : 0;
 
-  const uint32_t sketchSize = ESP.getSketchSize();
-  const uint32_t sketchSpace = ESP.getFreeSketchSpace() + sketchSize;
-  usedSketchKb = sketchSize / 1024UL;
-  flashUsagePct = sketchSpace > 0 ? constrain((sketchSize * 100UL) / sketchSpace, 0UL, 100UL) : 0;
+  usedSketchKb = cachedSketchKb;
+  flashUsagePct = cachedFlashUsagePct;
 }
 
 static void drawSystemStatusPanel()
@@ -720,6 +728,16 @@ static bool loggingActive()
   return usbLogActive || wifiLogActive;
 }
 
+static bool sw1Pressed()
+{
+  return false;
+}
+
+static bool sw2Pressed()
+{
+  return false;
+}
+
 static void saveLocalWifiCredentials()
 {
   if (strlen(LOCAL_WIFI_SSID) == 0) {
@@ -971,6 +989,10 @@ static void updateUsbLiveLog(uint32_t now)
 
 static void updateEcgDiagDebug(uint32_t now)
 {
+#if !ENABLE_ECG_SERIAL_DIAGNOSTIC
+  (void)now;
+  return;
+#else
   if (usbLogActive || wifiLogActive || now - lastEcgDiagDebugMs < ECG_DIAG_DEBUG_PERIOD_MS) {
     return;
   }
@@ -989,6 +1011,7 @@ static void updateEcgDiagDebug(uint32_t now)
                 (long)latestEcgCh2,
                 (long)latestEcgCh3,
                 (long)latestEcgCh4);
+#endif
 }
 
 static void startWifiLog(uint32_t now)
@@ -1027,13 +1050,25 @@ static void sendHttpResponse(WiFiClient &client, const char *contentType, const 
 
 static String wifiStatusJson()
 {
+  const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  const bool ecgOk = ecgSensor.ready() && latestEcgSaturationMask == 0;
+  int signalQuality = ecgOk ? 100 : 35;
+  if (latestEcgLeadOffPositive != 0 || latestEcgLeadOffNegative != 0) {
+    signalQuality -= 35;
+  }
+  if (latestEcgDiagnosticFlags & (ECG_DIAG_CABLE_NOISE | ECG_DIAG_RLD_UNSTABLE)) {
+    signalQuality -= 25;
+  }
+  signalQuality = constrain(signalQuality, 0, 100);
+  const char *recordingMode = wifiLogActive ? "ecg" : "idle";
+
   String json = "{";
   json += "\"version\":\"";
   json += DEVICE_VERSION;
   json += "\",\"wifi_connected\":";
-  json += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
+  json += wifiConnected ? "true" : "false";
   json += ",\"ip\":\"";
-  json += (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "";
+  json += wifiConnected ? WiFi.localIP().toString() : "";
   json += "\",\"wifi_logging\":";
   json += wifiLogActive ? "true" : "false";
   json += ",\"usb_logging\":";
@@ -1068,6 +1103,8 @@ static String wifiStatusJson()
   json += String(latestEcgDifferentialStep, 1);
   json += ",\"mic_level\":";
   json += String(smoothedLevel, 4);
+  json += ",\"mic_trace\":";
+  json += String(latestMicPoint, 4);
   json += ",\"acc_x\":";
   json += String(latestAccelX, 4);
   json += ",\"acc_y\":";
@@ -1077,6 +1114,33 @@ static String wifiStatusJson()
   json += ",\"acc_diag_flags\":\"";
   json += String(latestAccelDiagnosticFlags, HEX);
   json += "\"";
+  json += ",\"ecg_ch1\":";
+  json += String((long)latestEcgCh1);
+  json += ",\"ecg_ch2\":";
+  json += String((long)latestEcgCh2);
+  json += ",\"ecg_ch3\":";
+  json += String((long)latestEcgCh3);
+  json += ",\"ecg_ch4\":";
+  json += String((long)latestEcgCh4);
+  json += ",\"greenLed\":";
+  json += remoteLedManual ? (remoteGreenLedOn ? "true" : "false") : "true";
+  json += ",\"blueLed\":";
+  json += remoteLedManual ? (remoteBlueLedOn ? "true" : "false") : "true";
+  json += ",\"ledMode\":\"";
+  json += remoteLedManual ? "manual" : "heartbeat";
+  json += "\",\"sw1Pressed\":";
+  json += sw1Pressed() ? "true" : "false";
+  json += ",\"sw2Pressed\":";
+  json += sw2Pressed() ? "true" : "false";
+  json += ",\"batteryVolts\":0.0";
+  json += ",\"signalQuality\":";
+  json += String(signalQuality);
+  json += ",\"sampleRate\":100";
+  json += ",\"sdReady\":false";
+  json += ",\"recordingMode\":\"";
+  json += recordingMode;
+  json += "\",\"selfTestActive\":";
+  json += selfTestActive ? "true" : "false";
   json += "}";
   return json;
 }
@@ -1097,7 +1161,7 @@ static String controlPageHtml()
   html += "<pre id='status'>loading...</pre>";
   html += "<script>async function refresh(){let r=await fetch('/api/status');";
   html += "document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);}";
-  html += "refresh();setInterval(refresh,1000);</script>";
+  html += "refresh();setInterval(refresh,3000);</script>";
   html += "</body></html>";
   return html;
 }
@@ -1124,6 +1188,54 @@ static String readHttpRequestLine(WiFiClient &client, uint32_t timeoutMs = 250)
   return requestLine;
 }
 
+struct HttpRequest {
+  String line;
+  String body;
+};
+
+static HttpRequest readHttpRequest(WiFiClient &client, uint32_t timeoutMs = 250)
+{
+  HttpRequest request;
+  request.line = readHttpRequestLine(client, timeoutMs);
+  int contentLength = 0;
+  String headerLine;
+  const uint32_t start = millis();
+
+  while (client.connected() && millis() - start < timeoutMs) {
+    while (client.available()) {
+      const char c = (char)client.read();
+      if (c == '\r') {
+        continue;
+      }
+      if (c == '\n') {
+        if (headerLine.length() == 0) {
+          while ((int)request.body.length() < contentLength && millis() - start < timeoutMs) {
+            if (client.available()) {
+              request.body += (char)client.read();
+            } else {
+              delay(1);
+            }
+          }
+          return request;
+        }
+        String lower = headerLine;
+        lower.toLowerCase();
+        if (lower.startsWith("content-length:")) {
+          contentLength = lower.substring(15).toInt();
+          if (contentLength > 512) {
+            contentLength = 512;
+          }
+        }
+        headerLine = "";
+      } else if (headerLine.length() < 160) {
+        headerLine += c;
+      }
+    }
+    delay(1);
+  }
+  return request;
+}
+
 static void discardHttpHeaders(WiFiClient &client, uint32_t timeoutMs = 250)
 {
   uint8_t newlines = 0;
@@ -1144,6 +1256,89 @@ static void discardHttpHeaders(WiFiClient &client, uint32_t timeoutMs = 250)
   }
 }
 
+static bool jsonBoolValue(const String &body, const char *name, bool defaultValue)
+{
+  String key = "\"";
+  key += name;
+  key += "\"";
+  const int keyIndex = body.indexOf(key);
+  if (keyIndex < 0) {
+    return defaultValue;
+  }
+  const int colon = body.indexOf(':', keyIndex);
+  if (colon < 0) {
+    return defaultValue;
+  }
+  const String value = body.substring(colon + 1);
+  if (value.indexOf("true") >= 0) {
+    return true;
+  }
+  if (value.indexOf("false") >= 0) {
+    return false;
+  }
+  return defaultValue;
+}
+
+static bool jsonStringValue(const String &body, const char *name, String &out)
+{
+  String key = "\"";
+  key += name;
+  key += "\"";
+  const int keyIndex = body.indexOf(key);
+  if (keyIndex < 0) {
+    return false;
+  }
+  const int colon = body.indexOf(':', keyIndex);
+  const int firstQuote = body.indexOf('"', colon + 1);
+  const int secondQuote = body.indexOf('"', firstQuote + 1);
+  if (colon < 0 || firstQuote < 0 || secondQuote < 0) {
+    return false;
+  }
+  out = body.substring(firstQuote + 1, secondQuote);
+  return true;
+}
+
+static void setRemoteLedManual(const String &led, bool enabled)
+{
+  remoteLedManual = true;
+  selfTestActive = false;
+  if (led == "green") {
+    remoteGreenLedOn = enabled;
+  } else if (led == "blue") {
+    remoteBlueLedOn = enabled;
+  } else if (led == "all") {
+    remoteGreenLedOn = enabled;
+    remoteBlueLedOn = enabled;
+  }
+  ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, remoteGreenLedOn ? HEARTBEAT_LED_MAX_DUTY : 0);
+  ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, remoteBlueLedOn ? HEARTBEAT_LED_MAX_DUTY : 0);
+}
+
+static void startRemoteSelfTest(uint32_t now)
+{
+  selfTestActive = true;
+  selfTestStartMs = now;
+  remoteLedManual = false;
+}
+
+static String okJson(const char *message)
+{
+  String json = "{\"ok\":true,\"message\":\"";
+  json += message;
+  json += "\",\"status\":";
+  json += wifiStatusJson();
+  json += "}";
+  return json;
+}
+
+static String badRequestJson(const char *message)
+{
+  String json = "{\"ok\":false,\"message\":\"";
+  json += message;
+  json += "\"}";
+  return json;
+}
+
 static void handleWifiHttpClient(uint32_t now)
 {
   if (WiFi.status() != WL_CONNECTED || !wifiLogServerStarted) {
@@ -1157,10 +1352,11 @@ static void handleWifiHttpClient(uint32_t now)
 
   const bool streamActive = wifiLogActive && wifiStreamClient && wifiStreamClient.connected();
   const uint32_t requestTimeoutMs = streamActive ? 25 : 250;
-  const String requestLine = readHttpRequestLine(client, requestTimeoutMs);
-  discardHttpHeaders(client, requestTimeoutMs);
+  const HttpRequest request = readHttpRequest(client, requestTimeoutMs);
+  const String requestLine = request.line;
 
-  if (streamActive && requestLine.indexOf("GET /api/stop") != 0 && requestLine.indexOf("GET /control?cmd=stop") != 0 &&
+  if (streamActive && requestLine.indexOf("GET /api/stop") != 0 && requestLine.indexOf("POST /api/recording") != 0 &&
+      requestLine.indexOf("GET /control?cmd=stop") != 0 &&
       requestLine.indexOf("GET /api/status") != 0 && requestLine.indexOf("GET /status") != 0) {
     sendHttpResponse(client, "application/json", "{\"busy\":true,\"message\":\"stream active, stop logging first\"}");
     client.stop();
@@ -1185,7 +1381,9 @@ static void handleWifiHttpClient(uint32_t now)
     return;
   }
 
-  if (requestLine.indexOf("GET /api/start") == 0 || requestLine.indexOf("GET /control?cmd=start") == 0) {
+  if (requestLine.indexOf("OPTIONS ") == 0) {
+    sendHttpResponse(client, "application/json", "{\"ok\":true}");
+  } else if (requestLine.indexOf("GET /api/start") == 0 || requestLine.indexOf("GET /control?cmd=start") == 0) {
     startWifiLog(now);
     sendHttpResponse(client, "application/json", wifiStatusJson());
   } else if (requestLine.indexOf("GET /api/stop") == 0 || requestLine.indexOf("GET /control?cmd=stop") == 0) {
@@ -1193,6 +1391,35 @@ static void handleWifiHttpClient(uint32_t now)
     sendHttpResponse(client, "application/json", wifiStatusJson());
   } else if (requestLine.indexOf("GET /api/status") == 0 || requestLine.indexOf("GET /status") == 0) {
     sendHttpResponse(client, "application/json", wifiStatusJson());
+  } else if (requestLine.indexOf("POST /api/led-heartbeat") == 0) {
+    remoteLedManual = false;
+    selfTestActive = false;
+    sendHttpResponse(client, "application/json", okJson("led heartbeat mode"));
+  } else if (requestLine.indexOf("POST /api/led ") == 0) {
+    String led;
+    if (!jsonStringValue(request.body, "led", led)) {
+      sendHttpResponse(client, "application/json", badRequestJson("missing led"));
+    } else {
+      const bool enabled = jsonBoolValue(request.body, "enabled", false);
+      setRemoteLedManual(led, enabled);
+      sendHttpResponse(client, "application/json", okJson("led updated"));
+    }
+  } else if (requestLine.indexOf("POST /api/recording") == 0) {
+    String mode;
+    if (!jsonStringValue(request.body, "mode", mode)) {
+      sendHttpResponse(client, "application/json", badRequestJson("missing mode"));
+    } else if (mode == "idle") {
+      stopWifiLog();
+      sendHttpResponse(client, "application/json", okJson("logging stopped"));
+    } else if (mode == "ecg" || mode == "microphone") {
+      startWifiLog(now);
+      sendHttpResponse(client, "application/json", okJson("logging started"));
+    } else {
+      sendHttpResponse(client, "application/json", badRequestJson("bad mode"));
+    }
+  } else if (requestLine.indexOf("POST /api/self-test") == 0) {
+    startRemoteSelfTest(now);
+    sendHttpResponse(client, "application/json", okJson("self-test started"));
   } else {
     sendHttpResponse(client, "text/html", controlPageHtml());
   }
@@ -1405,6 +1632,20 @@ static void pushWavePoint(float sample)
   scrollHeartLabels();
 }
 
+static void pushMicDisplayPoint(float sample)
+{
+  pendingMicDisplaySum += sample;
+  ++pendingMicDisplayCount;
+
+  if (pendingMicDisplayCount < MIC_DISPLAY_SCROLL_DIVIDER) {
+    return;
+  }
+
+  pushWavePoint(pendingMicDisplaySum / pendingMicDisplayCount);
+  pendingMicDisplaySum = 0.0f;
+  pendingMicDisplayCount = 0;
+}
+
 static void pushEcgSample(const EcgSample &sample)
 {
   if (!sample.valid) {
@@ -1554,6 +1795,26 @@ static void updateDeviceHeartbeatLed(uint32_t now)
   }
 
   lastHeartbeatLedMs = now;
+  if (selfTestActive) {
+    const uint32_t elapsed = now - selfTestStartMs;
+    if (elapsed > 3000) {
+      selfTestActive = false;
+      ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, 0);
+      ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, 0);
+      return;
+    }
+    const bool greenOn = ((elapsed / 250) % 2) == 0;
+    ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, greenOn ? HEARTBEAT_LED_MAX_DUTY : 0);
+    ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, greenOn ? 0 : HEARTBEAT_LED_MAX_DUTY);
+    return;
+  }
+
+  if (remoteLedManual) {
+    ledcWrite(HEARTBEAT_GREEN_PWM_CHANNEL, remoteGreenLedOn ? HEARTBEAT_LED_MAX_DUTY : 0);
+    ledcWrite(HEARTBEAT_BLUE_PWM_CHANNEL, remoteBlueLedOn ? HEARTBEAT_LED_MAX_DUTY : 0);
+    return;
+  }
+
   const uint32_t phase = now % HEARTBEAT_LED_PERIOD_MS;
   const uint32_t halfPeriod = HEARTBEAT_LED_PERIOD_MS / 2;
   const uint32_t ramp = (phase < halfPeriod) ? phase : (HEARTBEAT_LED_PERIOD_MS - phase);
@@ -1577,7 +1838,7 @@ static void drainAcquisitionQueues()
 
     for (size_t i = 0; i < micFrame.displayPointCount; ++i) {
       latestMicPoint = micFrame.displayPoints[i];
-      pushWavePoint(micFrame.displayPoints[i]);
+      pushMicDisplayPoint(micFrame.displayPoints[i]);
     }
   }
 
@@ -1645,6 +1906,16 @@ static void outputTask(void *)
     ++core1LoopCounter;
     updateDeviceHeartbeatLed(now);
     handleUsbLogCommands(now);
+    drainAcquisitionQueues();
+    updateUsbLiveLog(now);
+    updateWifiLiveLog(now);
+
+    const uint32_t displayPeriodMs = (usbLogActive || wifiLogActive) ? 120 : 24;
+    if (now - lastDrawMs >= displayPeriodMs) {
+      lastDrawMs = now;
+      drawCombinedGraph();
+    }
+
     startWifiServerIfConnected();
     handleWifiHttpClient(now);
     updateEcgDiagDebug(now);
@@ -1654,16 +1925,6 @@ static void outputTask(void *)
       otaCheckedOnce = true;
       lastOtaCheckMs = now;
       checkForOtaUpdate();
-    }
-
-    drainAcquisitionQueues();
-    updateUsbLiveLog(now);
-    updateWifiLiveLog(now);
-
-    const uint32_t displayPeriodMs = (usbLogActive || wifiLogActive) ? 120 : 24;
-    if (now - lastDrawMs >= displayPeriodMs) {
-      lastDrawMs = now;
-      drawCombinedGraph();
     }
 
     core1BusyMicros += micros() - loopStartUs;
@@ -1676,6 +1937,10 @@ void setup()
   DebugSerial.begin(115200);
   delay(200);
   DebugSerial.printf("device version: %s\n", DEVICE_VERSION);
+  const uint32_t sketchSize = ESP.getSketchSize();
+  const uint32_t sketchSpace = ESP.getFreeSketchSpace() + sketchSize;
+  cachedSketchKb = sketchSize / 1024UL;
+  cachedFlashUsagePct = sketchSpace > 0 ? constrain((sketchSize * 100UL) / sketchSpace, 0UL, 100UL) : 0;
 
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
